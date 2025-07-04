@@ -645,7 +645,7 @@ def create_interface():
         
         gr.HTML("""
         <div class="feature-box">
-            <strong>🇹🇼 輕量台灣國語發音TTS</strong> 
+            <strong>🇹🇼 輕量台灣發音TTS</strong> 
         </div>
         """)
         
@@ -658,8 +658,8 @@ def create_interface():
         with gr.Row():
             with gr.Column(scale=1):
                 text_input = gr.Textbox(
-                    label="📝 輸入文本 (支援中英混合、數字)",
-                    placeholder="請輸入要合成的文本，支援中文、英文、數字混合...",
+                    label="📝 輸入文本 (以中文為主，英數表現不佳)",
+                    placeholder="請輸入要合成的文本",
                     lines=5,
                     max_lines=8,
                     value="你好！歡迎使用繁體中文語音合成系統。"
@@ -678,7 +678,7 @@ def create_interface():
                 enable_conversion = gr.State(value=True)
                 
                 generate_btn = gr.Button(
-                    "🎵 生成台灣國語語音",
+                    "🎵 生成語音",
                     variant="primary",
                     size="lg",
                     interactive=tts_model is not None
@@ -693,7 +693,7 @@ def create_interface():
                 )
                 
                 status_msg = gr.Textbox(
-                    label="📊 狀態資訊與調試信息",
+                    label="📊 狀態資訊",
                     interactive=False,
                     lines=8,
                     value="準備就緒，請輸入文本並點擊生成語音" if tts_model else f"模型載入失敗: {model_status}"
