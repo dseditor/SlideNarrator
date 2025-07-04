@@ -645,7 +645,7 @@ def create_interface():
         
         gr.HTML("""
         <div class="feature-box">
-            <strong>🇹🇼 專業台灣國語 TTS</strong> | 🔄 自動英數轉換 | 🎯 智慧文本處理
+            <strong>🇹🇼 輕量台灣國語發音TTS</strong> 
         </div>
         """)
         
@@ -713,39 +713,14 @@ def create_interface():
             gr.Markdown(f"""
             ### 🚀 主要功能
             
-            #### 🔄 智慧文本轉換
-            - **英文轉換**: hello → 哈囉, AI → 人工智慧, iPhone → 愛瘋
-            - **數字轉換**: 123 → 一二三, 2024 → 二零二四
-            - **大寫縮寫**: CPU → 西皮優, API → 欸皮愛, GPS → 吉皮艾斯
-            - **品牌名稱**: Apple → 蘋果, Google → 谷歌
-            - **技術詞彙**: computer → 電腦, software → 軟體
-            
             #### 🎯 支援內容
-            - 繁體中文文本
-            - 英文單詞和句子
-            - 阿拉伯數字
-            - 混合語言文本
-            - 常見縮寫和品牌
-            - 大寫英文縮寫（逐字母發音）
-            
-            ### 📝 使用技巧
-            1. **中英混合**: 支援「今天天氣很好，temperature是25度」
-            2. **大寫縮寫**: CPU、API、GPS等會自動逐字母發音
-            3. **數字處理**: 支援各種數字格式轉換
-            4. **專有名詞**: 內建常見品牌和技術詞彙
+            - 單一語音的繁體中文文本，英文數字支援有限
+            - 模型輕量
             
             ### 🔧 技術資訊
             - **模型**: MediaTek Breeze2-VITS-onnx
-            - **轉換規則**: {len(tts_model.text_converter.conversion_map) if tts_model else 0} 個內建對照
-            - **支援格式**: 中文、英文、數字、符號
             - **運行設備**: {device_info}
-            - **自動轉換**: 已啟用英文數字自動轉換
             
-            ### ⚙️ 自定義轉換
-            您可以編輯 `text_mapping.txt` 文件來添加自定義的轉換規則：
-            ```
-            your_word|您的中文發音
-            brand_name|品牌中文名
             ```
             """)
         
