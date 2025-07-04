@@ -1,0 +1,6 @@
+gradio>=4.0.0
+sherpa-onnx>=1.10.0
+numpy>=1.21.0
+torch>=2.0.0
+huggingface_hub>=0.16.0
+soundfile>=0.12.0
