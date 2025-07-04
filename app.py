@@ -1,6 +1,6 @@
 """
-Breeze2-VITS 繁體中文語音合成 - 英文朗讀問題修復版
-增強調試功能和轉換邏輯
+Breeze2-VITS 繁體中文語音合成 - 優化版
+支援英文和數字自動轉換為中文發音，大寫英文逐字母發音
 """
 
 import gradio as gr
@@ -24,12 +24,12 @@ except ImportError:
 
 
 class TextConverter:
-    """文本轉換器，將英文和數字轉換為中文發音 - 增強調試版"""
+    """文本轉換器，將英文和數字轉換為中文發音"""
     
     def __init__(self, mapping_file="text_mapping.txt"):
         self.mapping_file = Path(mapping_file)
         self.conversion_map = {}
-        self.debug_mode = True  # 啟用調試模式
+        self.debug_mode = False  # 簡化調試模式
         self.load_mapping()
     
     def load_mapping(self):
@@ -243,6 +243,21 @@ class TextConverter:
                     result += digit
             return result
     
+    def convert_uppercase_words(self, text):
+        """轉換全大寫單字為逐字母發音"""
+        def uppercase_to_letters(match):
+            word = match.group()
+            result = ""
+            for letter in word:
+                chinese_letter = self.conversion_map.get(letter.lower(), letter)
+                result += chinese_letter
+            self.debug_print(f"  大寫轉換: {word} → {result}")
+            return result
+        
+        # 匹配全大寫的單字（2個字母以上）
+        result = re.sub(r'\b[A-Z]{2,}\b', uppercase_to_letters, text)
+        return result
+    
     def convert_english(self, text):
         """轉換英文單詞為中文 - 增強調試版"""
         self.debug_print(f"英文轉換前: {repr(text)}")
@@ -328,16 +343,19 @@ class TextConverter:
         if text != original_text:
             self.debug_print(f"預處理後: {repr(text)}")
         
-        # 1. 轉換英文單詞（先處理多字母詞彙）
+        # 1. 先轉換大寫英文縮寫（在其他轉換之前）
+        text = self.convert_uppercase_words(text)
+        
+        # 2. 轉換英文單詞（普通詞彙）
         text = self.convert_english(text)
         
-        # 2. 轉換數字
+        # 3. 轉換數字
         text = self.convert_numbers(text)
         
-        # 3. 轉換剩餘的單個字母
+        # 4. 轉換剩餘的單個字母
         text = self.convert_single_letters(text)
         
-        # 4. 後處理
+        # 5. 後處理
         text = self.postprocess_text(text)
         
         if text != original_text:
@@ -352,11 +370,13 @@ class TextConverter:
         if test_texts is None:
             test_texts = [
                 "Hello world",
-                "I have 123 apples",
+                "I have 123 apples", 
+                "CPU and GPU are important",
                 "My email is test@gmail.com",
                 "Apple iPhone 15 is good",
-                "AI and ML are useful",
-                "CPU speed is 3.5 GHz"
+                "API development with Python",
+                "NASA sent rockets to space",
+                "USA and UK are allies"
             ]
         
         print("\n🧪 測試文本轉換功能:")
@@ -374,7 +394,7 @@ class TaiwaneseVITSTTS:
         self.model_dir = Path("./models")
         self.dict_dir = Path("./dict")
         self.text_converter = TextConverter()
-        self.debug_mode = True  # 啟用調試模式
+        self.debug_mode = False  # 簡化調試模式
         self.setup_jieba_dict()
         self.setup_model()
     
@@ -557,37 +577,9 @@ class TaiwaneseVITSTTS:
             return None, error_msg
 
 
-# 初始化時運行測試
-def run_initialization_tests():
-    """運行初始化測試"""
-    print("\n" + "="*60)
-    print("🔧 運行系統診斷測試")
-    print("="*60)
-    
-    # 測試文本轉換器
-    converter = TextConverter()
-    test_cases = [
-        "Hello world",
-        "I love Apple iPhone 15",
-        "AI technology is amazing",
-        "My email is user@gmail.com",
-        "CPU speed is 2.5 GHz"
-    ]
-    
-    print("\n📝 測試文本轉換功能:")
-    for test_text in test_cases:
-        result = converter.convert_text(test_text)
-        print(f"  輸入: {test_text}")
-        print(f"  輸出: {result}")
-        print()
-
-
 # 全局 TTS 實例
 print("🔧 正在初始化 TTS 模型...")
 try:
-    # 運行診斷測試
-    run_initialization_tests()
-    
     tts_model = TaiwaneseVITSTTS()
     print("✅ TTS 系統就緒!")
     model_status = "🟢 模型已載入"
@@ -606,22 +598,20 @@ def generate_speech(text, speed, enable_conversion):
 
 
 def create_interface():
-    # 預設範例文本 - 增加更多測試用例
+    # 預設範例文本 - 純中文版本
     examples = [
-        ["你好，歡迎使用繁體中文語音合成系統！", 1.0, True],
-        ["Hello world! 這是一個測試。", 1.0, True],
-        ["I love Apple iPhone 15 and Samsung Galaxy", 1.0, True],
-        ["AI technology is amazing, CPU speed is 3.5 GHz", 1.0, True],
-        ["My email is test@gmail.com, please contact me", 1.0, True],
-        ["今天是2024年1月1日，天氣很好。", 1.0, True],
-        ["Google and Microsoft are big tech companies", 1.0, True],
-        ["API development with Python is easy", 1.0, True],
+        ["你好，歡迎使用繁體中文語音合成系統！", 1.0],
+        ["今天天氣晴朗，適合外出踏青。", 1.0],
+        ["台灣的夜市文化非常豐富多彩。", 1.0],
+        ["人工智慧技術正在快速發展。", 1.1],
+        ["這個語音合成系統效果很不錯。", 1.0],
+        ["祝您使用愉快，謝謝您的支持。", 0.9],
     ]
     
     device_info = "🎮 GPU" if torch.cuda.is_available() else "💻 CPU"
     
     with gr.Blocks(
-        title="繁體中文語音合成 - Breeze2-VITS Enhanced Debug",
+        title="繁體中文語音合成 - Breeze2-VITS Enhanced",
         theme=gr.themes.Soft(),
         css="""
         .gradio-container {
@@ -643,26 +633,13 @@ def create_interface():
             margin: 10px 0;
             text-align: center;
         }
-        .debug-box {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            color: white;
-            padding: 10px 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
         """
     ) as demo:
         
         gr.HTML(f"""
         <div class="status-box">
-            <h1>🎙️ 繁體中文語音合成 - Breeze2-VITS Enhanced Debug</h1>
+            <h1>🎙️ 繁體中文語音合成 - Breeze2-VITS Enhanced</h1>
             <p><strong>狀態:</strong> {model_status} | <strong>設備:</strong> {device_info}</p>
-        </div>
-        """)
-        
-        gr.HTML("""
-        <div class="debug-box">
-            <strong>🔍 調試增強版</strong> | 詳細轉換日志 | 問題診斷 | 性能分析
         </div>
         """)
         
@@ -685,24 +662,20 @@ def create_interface():
                     placeholder="請輸入要合成的文本，支援中文、英文、數字混合...",
                     lines=5,
                     max_lines=8,
-                    value="Hello world! 今天是2024年，歡迎使用AI語音合成系統。"
+                    value="你好！歡迎使用繁體中文語音合成系統。"
                 )
                 
-                with gr.Row():
-                    speed = gr.Slider(
-                        label="⚡ 語音速度",
-                        minimum=0.5,
-                        maximum=2.0,
-                        step=0.1,
-                        value=1.0,
-                        info="調節語音播放速度"
-                    )
-                    
-                    enable_conversion = gr.Checkbox(
-                        label="🔄 啟用英數轉換",
-                        value=True,
-                        info="自動將英文和數字轉換為中文發音"
-                    )
+                speed = gr.Slider(
+                    label="⚡ 語音速度",
+                    minimum=0.5,
+                    maximum=2.0,
+                    step=0.1,
+                    value=1.0,
+                    info="調節語音播放速度"
+                )
+                
+                # 隱藏的轉換開關，預設啟用
+                enable_conversion = gr.State(value=True)
                 
                 generate_btn = gr.Button(
                     "🎵 生成台灣國語語音",
@@ -729,65 +702,23 @@ def create_interface():
         if tts_model:
             gr.Examples(
                 examples=examples,
-                inputs=[text_input, speed, enable_conversion],
+                inputs=[text_input, speed],
                 outputs=[audio_output, status_msg],
-                fn=generate_speech,
+                fn=lambda text, speed: generate_speech(text, speed, True),
                 cache_examples=False,
-                label="📚 範例文本 (包含英文朗讀測試)"
+                label="📚 範例文本"
             )
-        
-        with gr.Accordion("🔍 調試信息與故障排除", open=True):
-            gr.Markdown(f"""
-            ### 🚀 調試功能
-            
-            #### 🔄 轉換規則狀態
-            - **載入規則數**: {len(tts_model.text_converter.conversion_map) if tts_model else 0} 個
-            - **調試模式**: {'✅ 已啟用' if tts_model and tts_model.debug_mode else '❌ 未啟用'}
-            - **模型狀態**: {model_status}
-            
-            #### 🧪 常見問題診斷
-            
-            **問題1: 英文不發音**
-            - ✅ 確保啟用「英數轉換」功能
-            - ✅ 檢查控制台轉換日志
-            - ✅ 測試單獨的英文單詞
-            
-            **問題2: 轉換後仍有英文**
-            - 可能是詞典中缺少該詞彙
-            - 查看調試信息中的轉換過程
-            - 考慮添加自定義轉換規則
-            
-            **問題3: 發音不自然**
-            - 嘗試調整轉換後的中文用詞
-            - 使用更常見的中文表達
-            - 關閉轉換使用純中文測試
-            
-            #### 🔧 調試步驟
-            1. 打開瀏覽器開發者工具查看控制台
-            2. 輸入測試文本並生成語音
-            3. 觀察轉換過程的調試信息
-            4. 檢查哪些詞彙被成功轉換
-            5. 分析未轉換詞彙的原因
-            
-            #### 📝 測試建議
-            - 先測試純英文: "Hello world"
-            - 再測試中英混合: "Hello 世界"
-            - 測試數字: "I have 123 apples"
-            - 測試品牌: "Apple iPhone Samsung"
-            - 測試技術詞彙: "AI CPU GPU API"
-            """)
         
         with gr.Accordion("📋 使用說明與功能特色", open=False):
             gr.Markdown(f"""
             ### 🚀 主要功能
             
-            #### 🔄 智慧文本轉換 (增強版)
-            - **基本英文**: hello → 哈囉, good → 好的, thank → 謝謝
-            - **技術詞彙**: AI → 人工智慧, CPU → 中央處理器, API → 程式介面
-            - **品牌名稱**: Apple → 蘋果, Google → 谷歌, iPhone → 愛瘋
+            #### 🔄 智慧文本轉換
+            - **英文轉換**: hello → 哈囉, AI → 人工智慧, iPhone → 愛瘋
             - **數字轉換**: 123 → 一二三, 2024 → 二零二四
-            - **字母發音**: A → 欸, B → 比, C → 西
-            - **縮寫詞**: CEO → 執行長, USA → 美國, GPS → 全球定位系統
+            - **大寫縮寫**: CPU → 西皮優, API → 欸皮愛, GPS → 吉皮艾斯
+            - **品牌名稱**: Apple → 蘋果, Google → 谷歌
+            - **技術詞彙**: computer → 電腦, software → 軟體
             
             #### 🎯 支援內容
             - 繁體中文文本
@@ -795,33 +726,40 @@ def create_interface():
             - 阿拉伯數字
             - 混合語言文本
             - 常見縮寫和品牌
-            - 網路用語和技術術語
+            - 大寫英文縮寫（逐字母發音）
             
             ### 📝 使用技巧
-            1. **測試英文**: 使用範例中的英文測試案例
-            2. **調試轉換**: 查看控制台的詳細轉換過程
-            3. **混合文本**: 嘗試「Hello world 這是測試」
-            4. **數字處理**: 測試不同長度的數字
+            1. **中英混合**: 支援「今天天氣很好，temperature是25度」
+            2. **大寫縮寫**: CPU、API、GPS等會自動逐字母發音
+            3. **數字處理**: 支援各種數字格式轉換
+            4. **專有名詞**: 內建常見品牌和技術詞彙
             
             ### 🔧 技術資訊
             - **模型**: MediaTek Breeze2-VITS-onnx
             - **轉換規則**: {len(tts_model.text_converter.conversion_map) if tts_model else 0} 個內建對照
-            - **調試模式**: {'啟用' if tts_model and tts_model.debug_mode else '未啟用'}
+            - **支援格式**: 中文、英文、數字、符號
             - **運行設備**: {device_info}
-            - **模型狀態**: {model_status}
+            - **自動轉換**: 已啟用英文數字自動轉換
+            
+            ### ⚙️ 自定義轉換
+            您可以編輯 `text_mapping.txt` 文件來添加自定義的轉換規則：
+            ```
+            your_word|您的中文發音
+            brand_name|品牌中文名
+            ```
             """)
         
-        # 事件綁定
+        # 事件綁定 - 修正inputs參數
         generate_btn.click(
-            fn=generate_speech,
-            inputs=[text_input, speed, enable_conversion],
+            fn=lambda text, speed, conv=True: generate_speech(text, speed, conv),
+            inputs=[text_input, speed],
             outputs=[audio_output, status_msg],
             api_name="generate_speech"
         )
         
         text_input.submit(
-            fn=generate_speech,
-            inputs=[text_input, speed, enable_conversion],
+            fn=lambda text, speed, conv=True: generate_speech(text, speed, conv),
+            inputs=[text_input, speed],
             outputs=[audio_output, status_msg]
         )
     
