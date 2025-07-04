@@ -1,6 +1,6 @@
 """
-Breeze2-VITS 繁體中文語音合成 - 修復版
-添加 jieba 字典支援以解決中文 TTS 模型問題
+Breeze2-VITS 繁體中文語音合成 - 單說話人版本
+專為台灣國語優化的高品質語音合成系統
 """
 
 import gradio as gr
@@ -40,16 +40,7 @@ class TaiwaneseVITSTTS:
             # 創建字典目錄
             self.dict_dir.mkdir(exist_ok=True)
             
-            # 檢查是否需要下載字典文件
-            dict_files_needed = [
-                "jieba.dict.utf8",
-                "user.dict.utf8", 
-                "idf.txt.big",
-                "stop_words.txt"
-            ]
-            
-            # 嘗試從 Hugging Face 下載字典文件（如果有的話）
-            # 或者創建基本的字典文件
+            # 創建基本的字典文件
             self.create_basic_jieba_dict()
             
             print(f"✅ jieba 字典設置完成: {self.dict_dir}")
@@ -69,21 +60,10 @@ class TaiwaneseVITSTTS:
             stop_words_path = self.dict_dir / "stop_words.txt"
             
             # 如果字典文件不存在，創建空文件
-            if not jieba_dict_path.exists():
-                jieba_dict_path.touch()
-                print(f"📝 創建空字典文件: {jieba_dict_path}")
-            
-            if not user_dict_path.exists():
-                user_dict_path.touch()
-                print(f"📝 創建用戶字典文件: {user_dict_path}")
-            
-            if not idf_path.exists():
-                idf_path.touch()
-                print(f"📝 創建 IDF 文件: {idf_path}")
-                
-            if not stop_words_path.exists():
-                stop_words_path.touch()
-                print(f"📝 創建停用詞文件: {stop_words_path}")
+            for file_path in [jieba_dict_path, user_dict_path, idf_path, stop_words_path]:
+                if not file_path.exists():
+                    file_path.touch()
+                    print(f"📝 創建字典文件: {file_path.name}")
                 
         except Exception as e:
             print(f"⚠️ 創建基本字典文件失敗: {e}")
@@ -102,11 +82,6 @@ class TaiwaneseVITSTTS:
         
         if missing_files:
             print(f"❌ 缺少模型文件: {missing_files}")
-            print("📂 當前目錄結構:")
-            for item in Path(".").rglob("*"):
-                if item.is_file():
-                    size = item.stat().st_size
-                    print(f"  {item}: {size} bytes")
             return False
         
         print("✅ 所有模型文件都存在")
@@ -134,22 +109,21 @@ class TaiwaneseVITSTTS:
                 except:
                     print("🎮 GPU 資訊獲取失敗，但將嘗試使用 GPU")
             
-            # 配置 VITS 模型 - 關鍵修改：添加字典目錄
+            # 配置 VITS 模型
             vits_config = sherpa_onnx.OfflineTtsVitsModelConfig(
                 model=str(self.model_dir / "breeze2-vits.onnx"),
                 lexicon=str(self.model_dir / "lexicon.txt"),
                 tokens=str(self.model_dir / "tokens.txt"),
-                dict_dir=str(self.dict_dir),  # 添加字典目錄
+                dict_dir=str(self.dict_dir),
             )
             
             print(f"📚 字典目錄: {self.dict_dir}")
-            print(f"📁 字典目錄內容: {list(self.dict_dir.iterdir()) if self.dict_dir.exists() else '目錄不存在'}")
             
             # 配置 TTS 模型
             model_config = sherpa_onnx.OfflineTtsModelConfig(
                 vits=vits_config,
                 num_threads=2 if device == "cpu" else 1,
-                debug=True,  # 啟用調試模式以獲得更多資訊
+                debug=False,  # 關閉調試模式以減少日誌
                 provider=provider,
             )
             
@@ -157,7 +131,7 @@ class TaiwaneseVITSTTS:
             config = sherpa_onnx.OfflineTtsConfig(
                 model=model_config,
                 rule_fsts="",
-                max_num_sentences=1,
+                max_num_sentences=2,  # 支援較長句子
             )
             
             print("🔄 正在載入 TTS 模型...")
@@ -180,24 +154,24 @@ class TaiwaneseVITSTTS:
             print(f"詳細錯誤: {traceback.format_exc()}")
             raise
 
-    def synthesize(self, text, speaker_id=0, speed=1.0):
-        """合成語音"""
+    def synthesize(self, text, speed=1.0):
+        """合成語音 - 單說話人版本"""
         if not text or not text.strip():
             return None, "❌ 請輸入文本"
         
         # 文本預處理
         text = text.strip()
-        if len(text) > 200:
-            text = text[:200]
+        if len(text) > 500:  # 增加文本長度限制
+            text = text[:500]
             
         try:
-            print(f"🎤 正在合成語音: {text[:30]}...")
-            print(f"🎭 說話人: {speaker_id}, ⚡ 速度: {speed}x")
+            print(f"🎤 正在合成語音: {text[:50]}...")
+            print(f"⚡ 語音速度: {speed}x")
             
-            # 生成語音
+            # 生成語音 - 固定使用說話人 ID 0
             audio = self.tts.generate(
                 text=text,
-                sid=speaker_id,
+                sid=0,  # 固定使用第一個說話人
                 speed=speed
             )
             
@@ -223,13 +197,11 @@ class TaiwaneseVITSTTS:
             duration = len(audio_array) / sample_rate
             print(f"✅ 語音合成完成! 長度: {duration:.2f}秒")
             
-            return (sample_rate, audio_array), f"✅ 語音合成成功！\n📊 採樣率: {sample_rate}Hz\n⏱️ 時長: {duration:.2f}秒\n🎭 說話人: {speaker_id}"
+            return (sample_rate, audio_array), f"✅ 語音合成成功！\n📊 採樣率: {sample_rate}Hz\n⏱️ 時長: {duration:.2f}秒\n🎭 台灣國語聲音"
             
         except Exception as e:
             error_msg = f"❌ 語音合成失敗: {str(e)}"
             print(error_msg)
-            import traceback
-            print(f"詳細錯誤: {traceback.format_exc()}")
             return None, error_msg
 
 
@@ -245,22 +217,23 @@ except Exception as e:
     model_status = f"🔴 模型載入失敗: {str(e)}"
 
 
-def generate_speech(text, speaker_id, speed):
-    """Gradio 介面函數"""
+def generate_speech(text, speed):
+    """Gradio 介面函數 - 移除說話人參數"""
     if tts_model is None:
         return None, f"❌ TTS 模型未正確載入\n\n詳情: {model_status}"
     
-    return tts_model.synthesize(text, speaker_id, speed)
+    return tts_model.synthesize(text, speed)
 
 
 def create_interface():
-    # 預設範例文本
+    # 預設範例文本 - 移除說話人參數
     examples = [
-        ["你好，歡迎使用繁體中文語音合成系統！", 0, 1.0],
-        ["今天天氣很好，適合出去走走。", 1, 1.0],
-        ["人工智慧技術正在快速發展，為我們的生活帶來許多便利。", 2, 1.2],
-        ["台灣是一個美麗的島嶼，有著豐富的文化和美食。", 3, 0.9],
-        ["科技改變生活，創新引領未來。", 4, 1.1],
+        ["你好，歡迎使用繁體中文語音合成系統！", 1.0],
+        ["今天天氣很好，適合出去走走。", 1.0],
+        ["人工智慧技術正在快速發展，為我們的生活帶來許多便利。", 1.1],
+        ["台灣是一個美麗的島嶼，有著豐富的文化和美食。", 0.9],
+        ["科技改變生活，創新引領未來。讓我們一起擁抱智慧時代的到來。", 1.2],
+        ["春天來了，櫻花盛開，微風輕拂，真是個美好的季節。", 0.8],
     ]
     
     # 檢查模型狀態
@@ -281,6 +254,14 @@ def create_interface():
             border-radius: 10px;
             margin: 10px 0;
         }
+        .feature-box {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            text-align: center;
+        }
         """
     ) as demo:
         
@@ -291,10 +272,10 @@ def create_interface():
         </div>
         """)
         
-        gr.Markdown("""
-        使用 **MediaTek Breeze2-VITS** 模型進行高品質繁體中文語音合成
-        
-        ✨ **特色:** 🇹🇼 繁體中文優化 | 🎭 多種說話人 | ⚡ 快速推理 | 🎚️ 速度調節
+        gr.HTML("""
+        <div class="feature-box">
+            <strong>🇹🇼 專業台灣國語 TTS</strong> | 由 MediaTek 開發，專為繁體中文優化
+        </div>
         """)
         
         if not tts_model:
@@ -315,37 +296,26 @@ def create_interface():
             with gr.Column(scale=1):
                 # 文本輸入
                 text_input = gr.Textbox(
-                    label="📝 輸入文本 (最多200字)",
+                    label="📝 輸入文本 (最多500字)",
                     placeholder="請輸入要合成的繁體中文文本...",
-                    lines=4,
-                    max_lines=6,
+                    lines=5,
+                    max_lines=8,
                     value="你好，這是一個語音合成測試。歡迎使用繁體中文TTS系統！"
                 )
                 
-                with gr.Row():
-                    # 說話人選擇
-                    speaker_id = gr.Slider(
-                        label="🎭 說話人",
-                        minimum=0,
-                        maximum=10,
-                        step=1,
-                        value=0,
-                        info="選擇不同的說話人聲音 (0-10)"
-                    )
-                    
-                    # 語音速度
-                    speed = gr.Slider(
-                        label="⚡ 語音速度",
-                        minimum=0.5,
-                        maximum=2.0,
-                        step=0.1,
-                        value=1.0,
-                        info="調節語音播放速度"
-                    )
+                # 只保留語音速度控制
+                speed = gr.Slider(
+                    label="⚡ 語音速度",
+                    minimum=0.5,
+                    maximum=2.0,
+                    step=0.1,
+                    value=1.0,
+                    info="調節語音播放速度 (0.5x 慢速 ↔ 2.0x 快速)"
+                )
                 
                 # 生成按鈕
                 generate_btn = gr.Button(
-                    "🎵 生成語音",
+                    "🎵 生成台灣國語語音",
                     variant="primary",
                     size="lg",
                     interactive=tts_model is not None
@@ -372,7 +342,7 @@ def create_interface():
         if tts_model:  # 只有在模型正常載入時才顯示範例
             gr.Examples(
                 examples=examples,
-                inputs=[text_input, speaker_id, speed],
+                inputs=[text_input, speed],  # 移除說話人參數
                 outputs=[audio_output, status_msg],
                 fn=generate_speech,
                 cache_examples=False,
@@ -382,34 +352,50 @@ def create_interface():
         # 使用說明和技術資訊
         with gr.Accordion("📋 使用說明與技術資訊", open=False):
             gr.Markdown(f"""
-            ### 使用說明
-            1. 在文本框中輸入繁體中文文本 (建議不超過200字)
-            2. 選擇喜歡的說話人聲音 (0-10，每個數字對應不同聲音特色)
-            3. 調整語音速度 (0.5x 慢速 ↔ 2.0x 快速)
-            4. 點擊「生成語音」按鈕
-            5. 在右側播放和下載生成的語音
+            ### 🚀 使用說明
+            1. 在文本框中輸入繁體中文文本 (支援最多500字)
+            2. 調整語音速度 (建議範圍 0.8x - 1.5x)
+            3. 點擊「生成台灣國語語音」按鈕
+            4. 在右側播放和下載生成的語音
             
-            ### 技術資訊
+            ### 🎯 模型特色
+            - **專業台灣國語**: 經過台灣語料訓練，發音自然
+            - **高品質合成**: 使用 VITS 架構，語音清晰流暢
+            - **移動優化**: 輕量化設計，適合各種設備
+            - **即時生成**: 快速推理，支援即時語音合成
+            
+            ### 🔧 技術資訊
             - **模型**: MediaTek Breeze2-VITS-onnx
             - **語言**: 繁體中文 (台灣國語)
             - **採樣率**: 22050 Hz
             - **推理引擎**: Sherpa-ONNX
             - **運行設備**: {device_info}
             - **模型狀態**: {model_status}
-            - **jieba 字典**: {'✅ 已配置' if Path('./dict').exists() else '❌ 未配置'}
+            - **字典配置**: {'✅ 已配置' if Path('./dict').exists() else '❌ 未配置'}
             
-            ### 故障排除
+            ### 📝 最佳實踐
+            - **文本長度**: 建議單次合成 10-100 字，效果最佳
+            - **標點符號**: 適當使用逗號和句號來控制語調停頓
+            - **語音速度**: 一般對話建議 1.0x，朗讀建議 0.9x，快速播報建議 1.3x
+            - **特殊字符**: 避免使用過多英文或特殊符號
+            
+            ### 🛠️ 故障排除
             如果遇到問題：
             1. 檢查文本是否為繁體中文
             2. 嘗試較短的文本 (10-50字)
-            3. 重新整理頁面
-            4. 檢查瀏覽器控制台錯誤
+            3. 重新整理頁面重新載入模型
+            4. 檢查瀏覽器控制台錯誤訊息
+            
+            ### 📄 授權資訊
+            - **模型**: MediaTek Research 開源模型
+            - **使用範圍**: 研究和個人使用
+            - **商業使用**: 請參考 MediaTek 授權條款
             """)
         
-        # 事件綁定
+        # 事件綁定 - 移除說話人參數
         generate_btn.click(
             fn=generate_speech,
-            inputs=[text_input, speaker_id, speed],
+            inputs=[text_input, speed],
             outputs=[audio_output, status_msg],
             api_name="generate_speech"
         )
@@ -417,7 +403,7 @@ def create_interface():
         # 鍵盤快捷鍵
         text_input.submit(
             fn=generate_speech,
-            inputs=[text_input, speaker_id, speed],
+            inputs=[text_input, speed],
             outputs=[audio_output, status_msg]
         )
     
