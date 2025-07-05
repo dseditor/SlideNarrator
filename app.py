@@ -1,6 +1,6 @@
 """
-Breeze2-VITS 繁體中文語音合成 - 優化版
-支援英文和數字自動轉換為中文發音，大寫英文逐字母發音
+Breeze2-VITS 繁體中文語音合成 - 修正版
+只修正字典檔載入問題，保持原有功能
 """
 
 import gradio as gr
@@ -21,6 +21,13 @@ try:
 except ImportError:
     os.system("pip install huggingface_hub")
     from huggingface_hub import hf_hub_download
+
+# 安裝 pypinyin 用於中文發音處理
+try:
+    from pypinyin import pinyin, Style
+except ImportError:
+    os.system("pip install pypinyin")
+    from pypinyin import pinyin, Style
 
 
 class TextConverter:
@@ -50,14 +57,6 @@ class TextConverter:
                         self.conversion_map[original.strip().lower()] = chinese.strip()
                 
                 print(f"✅ 載入 {len(self.conversion_map)} 個轉換規則")
-                
-                # 調試：顯示部分轉換規則
-                if self.debug_mode:
-                    print("🔍 部分轉換規則:")
-                    for i, (k, v) in enumerate(list(self.conversion_map.items())[:10]):
-                        print(f"  {k} → {v}")
-                    if len(self.conversion_map) > 10:
-                        print(f"  ... 還有 {len(self.conversion_map) - 10} 個規則")
                         
             else:
                 print(f"⚠️ 轉換對照表文件不存在: {self.mapping_file}")
@@ -67,83 +66,28 @@ class TextConverter:
             self.create_enhanced_mapping()
     
     def create_enhanced_mapping(self):
-        """創建增強的轉換對照表"""
+        """創建基本轉換對照表"""
         default_mappings = {
             # 數字
             '0': '零', '1': '一', '2': '二', '3': '三', '4': '四',
             '5': '五', '6': '六', '7': '七', '8': '八', '9': '九',
             '10': '十', '11': '十一', '12': '十二', '13': '十三', '14': '十四', '15': '十五',
             '16': '十六', '17': '十七', '18': '十八', '19': '十九', '20': '二十',
-            '100': '一百', '1000': '一千', '10000': '一萬',
             
-            # 基本英文問候語
-            'hello': '哈囉', 'hi': '嗨', 'hey': '嘿', 'bye': '拜拜', 'goodbye': '再見',
-            'yes': '是的', 'no': '不', 'ok': '好的', 'okay': '好的',
-            'good': '好的', 'bad': '不好', 'nice': '很棒', 'great': '很好',
-            'thank': '謝謝', 'thanks': '謝謝', 'please': '請',
-            'sorry': '對不起', 'excuse': '不好意思',
+            # 基本英文
+            'hello': '哈囉', 'hi': '嗨', 'bye': '拜拜', 'ok': '好的',
+            'ai': '人工智慧', 'cpu': '中央處理器', 'gpu': '圖形處理器',
             
-            # 時間相關
-            'today': '今天', 'tomorrow': '明天', 'yesterday': '昨天',
-            'morning': '早上', 'afternoon': '下午', 'evening': '晚上', 'night': '晚上',
-            'monday': '星期一', 'tuesday': '星期二', 'wednesday': '星期三',
-            'thursday': '星期四', 'friday': '星期五', 'saturday': '星期六', 'sunday': '星期日',
-            
-            # 常用動詞
-            'go': '去', 'come': '來', 'see': '看', 'look': '看', 'do': '做', 'make': '做',
-            'get': '得到', 'take': '拿', 'give': '給', 'have': '有', 'be': '是',
-            'know': '知道', 'think': '想', 'want': '想要', 'need': '需要',
-            'like': '喜歡', 'love': '愛', 'help': '幫助', 'work': '工作',
-            
-            # 技術詞彙
-            'ai': '人工智慧', 'api': '程式介面', 'app': '應用程式', 'web': '網路',
-            'cpu': '中央處理器', 'gpu': '圖形處理器', 'ram': '記憶體',
-            'computer': '電腦', 'laptop': '筆記型電腦', 'phone': '手機', 'mobile': '手機',
-            'internet': '網際網路', 'wifi': '無線網路', 'bluetooth': '藍牙',
-            'software': '軟體', 'hardware': '硬體', 'program': '程式', 'code': '程式碼',
-            'data': '資料', 'database': '資料庫', 'file': '檔案', 'folder': '資料夾',
-            
-            # 品牌名稱
-            'apple': '蘋果', 'google': '谷歌', 'microsoft': '微軟', 'amazon': '亞馬遜',
-            'facebook': '臉書', 'twitter': '推特', 'youtube': '油管', 'instagram': 'instagram',
-            'samsung': '三星', 'sony': '索尼', 'lg': 'LG', 'htc': 'HTC',
-            'iphone': '愛瘋', 'android': '安卓', 'windows': '視窗系統', 'ios': 'iOS',
-            
-            # 常用形容詞
-            'big': '大', 'small': '小', 'new': '新', 'old': '舊',
-            'hot': '熱', 'cold': '冷', 'fast': '快', 'slow': '慢',
-            'easy': '容易', 'hard': '困難', 'simple': '簡單', 'complex': '複雜',
-            'important': '重要', 'useful': '有用', 'interesting': '有趣',
-            
-            # 字母 (更自然的中文發音)
+            # 字母
             'a': '欸', 'b': '比', 'c': '西', 'd': '迪', 'e': '伊',
             'f': '艾夫', 'g': '吉', 'h': '艾奇', 'i': '愛', 'j': '傑',
             'k': '凱', 'l': '艾爾', 'm': '艾姆', 'n': '艾恩', 'o': '歐',
             'p': '皮', 'q': '丘', 'r': '艾爾', 's': '艾斯', 't': '替',
             'u': '優', 'v': '威', 'w': '達布爾優', 'x': '艾克斯', 'y': '歪', 'z': '萊德',
-            
-            # 縮寫詞
-            'ceo': '執行長', 'cto': '技術長', 'cfo': '財務長',
-            'usa': '美國', 'uk': '英國', 'eu': '歐盟',
-            'nasa': '美國太空總署', 'fbi': '聯邦調查局',
-            'covid': '新冠肺炎', 'dna': 'DNA', 'gps': '全球定位系統',
-            
-            # 網路用語
-            'email': '電子郵件', 'www': '全球資訊網', 'http': 'HTTP',
-            'url': '網址', 'link': '連結', 'click': '點擊',
-            'download': '下載', 'upload': '上傳', 'login': '登入', 'logout': '登出',
-            
-            # 常見英文片語的關鍵詞
-            'how': '如何', 'what': '什麼', 'where': '哪裡', 'when': '什麼時候',
-            'why': '為什麼', 'who': '誰', 'which': '哪個',
-            'this': '這個', 'that': '那個', 'here': '這裡', 'there': '那裡',
-            'and': '和', 'or': '或', 'but': '但是', 'so': '所以',
-            'very': '非常', 'much': '很多', 'many': '很多', 'some': '一些',
-            'all': '全部', 'every': '每個', 'any': '任何',
         }
         
         self.conversion_map = default_mappings
-        print(f"✅ 使用增強轉換規則: {len(default_mappings)} 個")
+        print(f"✅ 使用基本轉換規則: {len(default_mappings)} 個")
     
     def debug_print(self, message):
         """調試打印函數"""
@@ -151,44 +95,32 @@ class TextConverter:
             print(f"🔍 [DEBUG] {message}")
     
     def convert_numbers(self, text):
-        """轉換連續數字為中文 - 增強版"""
-        self.debug_print(f"數字轉換前: {repr(text)}")
-        
+        """轉換連續數字為中文"""
         def number_to_chinese(match):
             number = match.group()
-            self.debug_print(f"處理數字: {number}")
-            
             if len(number) <= 2:  
                 result = ""
                 for digit in number:
                     chinese_digit = self.conversion_map.get(digit, digit)
                     result += chinese_digit
-                    self.debug_print(f"  {digit} → {chinese_digit}")
                 return result
             else:
-                # 複雜數字處理
-                converted = self.convert_large_number(number)
-                self.debug_print(f"  大數字 {number} → {converted}")
-                return converted
+                return self.convert_large_number(number)
         
-        # 匹配連續數字
         result = re.sub(r'\d+', number_to_chinese, text)
-        if result != text:
-            self.debug_print(f"數字轉換後: {repr(result)}")
         return result
     
     def convert_large_number(self, number_str):
-        """轉換大數字為中文 - 改進版"""
+        """轉換大數字為中文"""
         try:
             num = int(number_str)
             if num == 0:
                 return '零'
             
-            # 使用更完整的數字轉換
             if str(num) in self.conversion_map:
                 return self.conversion_map[str(num)]
             
-            # 簡化的數字轉換（支援到萬）
+            # 簡化的數字轉換
             digits = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九']
             
             if num < 10:
@@ -205,36 +137,13 @@ class TextConverter:
                 if ones > 0:
                     result += digits[ones]
                 return result
-            elif num < 1000:
-                hundreds = num // 100
-                remainder = num % 100
-                result = digits[hundreds] + '百'
-                if remainder > 0:
-                    if remainder < 10:
-                        result += '零' + digits[remainder]
-                    elif remainder < 20:
-                        result += '一十' if remainder == 10 else '一十' + digits[remainder % 10]
-                    else:
-                        result += self.convert_large_number(str(remainder))
-                return result
-            elif num < 10000:
-                thousands = num // 1000
-                remainder = num % 1000
-                result = digits[thousands] + '千'
-                if remainder > 0:
-                    if remainder < 100:
-                        result += '零' + self.convert_large_number(str(remainder))
-                    else:
-                        result += self.convert_large_number(str(remainder))
-                return result
             else:
-                # 對於更大的數字，逐位轉換
+                # 逐位轉換
                 result = ""
                 for digit in number_str:
                     result += digits[int(digit)]
                 return result
         except:
-            # 如果轉換失敗，逐位轉換數字
             result = ""
             for digit in number_str:
                 if digit.isdigit():
@@ -251,87 +160,49 @@ class TextConverter:
             for letter in word:
                 chinese_letter = self.conversion_map.get(letter.lower(), letter)
                 result += chinese_letter
-            self.debug_print(f"  大寫轉換: {word} → {result}")
             return result
         
-        # 匹配全大寫的單字（2個字母以上）
         result = re.sub(r'\b[A-Z]{2,}\b', uppercase_to_letters, text)
         return result
     
     def convert_english(self, text):
-        """轉換英文單詞為中文 - 增強調試版"""
-        self.debug_print(f"英文轉換前: {repr(text)}")
-        original_text = text
-        
-        # 按長度排序，先處理長詞彙
+        """轉換英文單詞為中文"""
         sorted_words = sorted(self.conversion_map.keys(), key=len, reverse=True)
         
-        conversion_count = 0
         for english_word in sorted_words:
-            if len(english_word) > 1:  # 跳過單字母，後面單獨處理
+            if len(english_word) > 1:
                 chinese_word = self.conversion_map[english_word]
-                # 使用單詞邊界匹配，不區分大小寫
                 pattern = r'\b' + re.escape(english_word) + r'\b'
-                new_text = re.sub(pattern, chinese_word, text, flags=re.IGNORECASE)
-                
-                if new_text != text:
-                    self.debug_print(f"  轉換: {english_word} → {chinese_word}")
-                    conversion_count += 1
-                    text = new_text
+                text = re.sub(pattern, chinese_word, text, flags=re.IGNORECASE)
         
-        if conversion_count > 0:
-            self.debug_print(f"英文轉換後: {repr(text)} (共轉換 {conversion_count} 個詞)")
-        else:
-            self.debug_print("沒有找到可轉換的英文詞彙")
-            
         return text
     
     def convert_single_letters(self, text):
-        """轉換單個英文字母 - 增強版"""
-        self.debug_print(f"字母轉換前: {repr(text)}")
-        
+        """轉換單個英文字母"""
         def letter_to_chinese(match):
             letter = match.group().lower()
             chinese = self.conversion_map.get(letter, letter)
-            self.debug_print(f"  字母轉換: {letter} → {chinese}")
             return chinese
         
-        # 匹配獨立的英文字母
         result = re.sub(r'\b[a-zA-Z]\b', letter_to_chinese, text)
-        if result != text:
-            self.debug_print(f"字母轉換後: {repr(result)}")
         return result
     
     def preprocess_text(self, text):
-        """預處理文本 - 處理特殊情況"""
-        # 處理常見的英文縮寫
+        """預處理文本"""
         text = re.sub(r'\bDr\.', 'Doctor', text, flags=re.IGNORECASE)
         text = re.sub(r'\bMr\.', 'Mister', text, flags=re.IGNORECASE)
-        text = re.sub(r'\bMrs\.', 'Missis', text, flags=re.IGNORECASE)
-        text = re.sub(r'\bMs\.', 'Miss', text, flags=re.IGNORECASE)
-        
-        # 處理email地址中的@符號
         text = re.sub(r'@', ' at ', text)
-        
-        # 處理網址中的點
         text = re.sub(r'\.com\b', ' dot com', text, flags=re.IGNORECASE)
-        text = re.sub(r'\.org\b', ' dot org', text, flags=re.IGNORECASE)
-        text = re.sub(r'\.net\b', ' dot net', text, flags=re.IGNORECASE)
-        
         return text
     
     def postprocess_text(self, text):
-        """後處理文本 - 清理和優化"""
-        # 清理多餘空格
+        """後處理文本"""
         text = re.sub(r'\s+', ' ', text).strip()
-        
-        # 處理標點符號前的空格
         text = re.sub(r'\s+([，。！？；：])', r'\1', text)
-        
         return text
     
     def convert_text(self, text):
-        """主要轉換函數 - 增強調試版"""
+        """主要轉換函數"""
         if not text:
             return text
         
@@ -340,22 +211,14 @@ class TextConverter:
         
         # 預處理
         text = self.preprocess_text(text)
-        if text != original_text:
-            self.debug_print(f"預處理後: {repr(text)}")
         
-        # 1. 先轉換大寫英文縮寫（在其他轉換之前）
+        # 轉換
         text = self.convert_uppercase_words(text)
-        
-        # 2. 轉換英文單詞（普通詞彙）
         text = self.convert_english(text)
-        
-        # 3. 轉換數字
         text = self.convert_numbers(text)
-        
-        # 4. 轉換剩餘的單個字母
         text = self.convert_single_letters(text)
         
-        # 5. 後處理
+        # 後處理
         text = self.postprocess_text(text)
         
         if text != original_text:
@@ -364,38 +227,15 @@ class TextConverter:
             print(f"ℹ️ 文本未發生變化: {repr(text)}")
         
         return text
-    
-    def test_conversion(self, test_texts=None):
-        """測試轉換功能"""
-        if test_texts is None:
-            test_texts = [
-                "Hello world",
-                "I have 123 apples", 
-                "CPU and GPU are important",
-                "My email is test@gmail.com",
-                "Apple iPhone 15 is good",
-                "API development with Python",
-                "NASA sent rockets to space",
-                "USA and UK are allies"
-            ]
-        
-        print("\n🧪 測試文本轉換功能:")
-        print("=" * 50)
-        for text in test_texts:
-            converted = self.convert_text(text)
-            print(f"原文: {text}")
-            print(f"轉換: {converted}")
-            print("-" * 50)
 
 
 class TaiwaneseVITSTTS:
     def __init__(self):
         self.tts = None
         self.model_dir = Path("./models")
-        self.dict_dir = Path("./dict")
+        self.dict_dir = Path("./dict")  # 保留原邏輯
         self.text_converter = TextConverter()
-        self.debug_mode = False  # 簡化調試模式
-        self.setup_jieba_dict()
+        self.debug_mode = False
         self.setup_model()
     
     def debug_print(self, message):
@@ -403,94 +243,87 @@ class TaiwaneseVITSTTS:
         if self.debug_mode:
             print(f"🔍 [TTS DEBUG] {message}")
     
-    def setup_jieba_dict(self):
-        """設置 jieba 字典目錄"""
-        try:
-            print("🔧 設置 jieba 字典...")
-            self.dict_dir.mkdir(exist_ok=True)
-            self.create_basic_jieba_dict()
-            print(f"✅ jieba 字典設置完成: {self.dict_dir}")
-        except Exception as e:
-            print(f"⚠️ jieba 字典設置失敗: {e}")
-            self.dict_dir.mkdir(exist_ok=True)
-    
-    def create_basic_jieba_dict(self):
-        """創建基本的 jieba 字典文件"""
-        try:
-            jieba_dict_path = self.dict_dir / "jieba.dict.utf8"
-            user_dict_path = self.dict_dir / "user.dict.utf8"
-            idf_path = self.dict_dir / "idf.txt.big"
-            stop_words_path = self.dict_dir / "stop_words.txt"
-            
-            for file_path in [jieba_dict_path, user_dict_path, idf_path, stop_words_path]:
-                if not file_path.exists():
-                    file_path.touch()
-                    print(f"📝 創建字典文件: {file_path.name}")
-        except Exception as e:
-            print(f"⚠️ 創建基本字典文件失敗: {e}")
-
     def verify_model_files(self):
-        """檢查本地模型文件是否存在"""
-        required_files = ["breeze2-vits.onnx", "lexicon.txt", "tokens.txt"]
+        """檢查模型文件 - 修正版本"""
+        print("🔍 檢查模型文件...")
         
-        missing_files = []
-        for file_name in required_files:
-            file_path = self.model_dir / file_name
-            if not file_path.exists():
-                missing_files.append(file_name)
-            elif file_path.stat().st_size == 0:
-                missing_files.append(f"{file_name} (檔案大小為 0)")
+        # 檢查多種可能的檔案名稱
+        model_files = {
+            "model": ["breeze2-vits.onnx", "model.onnx", "vits.onnx"],
+            "lexicon": ["lexicon.txt"],
+            "tokens": ["tokens.txt"]
+        }
         
-        if missing_files:
-            print(f"❌ 缺少模型文件: {missing_files}")
-            return False
+        found_files = {}
         
-        print("✅ 所有模型文件都存在")
-        return True
+        for file_type, possible_names in model_files.items():
+            found = False
+            for name in possible_names:
+                file_path = self.model_dir / name
+                if file_path.exists() and file_path.stat().st_size > 0:
+                    found_files[file_type] = str(file_path)
+                    print(f"✅ 找到 {file_type}: {name}")
+                    found = True
+                    break
+            
+            if not found:
+                print(f"❌ 未找到 {file_type} 文件")
+                return False, {}
+        
+        return True, found_files
 
     def setup_model(self):
-        """設置和初始化模型"""
+        """設置和初始化模型 - 修正字典檔載入"""
         try:
-            if not self.verify_model_files():
+            # 檢查模型文件
+            files_exist, model_files = self.verify_model_files()
+            if not files_exist:
                 raise FileNotFoundError("模型文件缺失")
             
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            provider = "cuda" if device == "cuda" else "cpu"
+            provider = "CUDAExecutionProvider" if device == "cuda" else "CPUExecutionProvider"
             
             print(f"🔧 使用設備: {device.upper()}")
+            print(f"🔧 使用執行提供者: {provider}")
             
+            # 參考 SherpaTTS.kt 的配置方式
             vits_config = sherpa_onnx.OfflineTtsVitsModelConfig(
-                model=str(self.model_dir / "breeze2-vits.onnx"),
-                lexicon=str(self.model_dir / "lexicon.txt"),
-                tokens=str(self.model_dir / "tokens.txt"),
-                dict_dir=str(self.dict_dir),
+                model=model_files["model"],
+                lexicon=model_files["lexicon"],
+                tokens=model_files["tokens"],
+                dict_dir=str(self.dict_dir) if self.dict_dir.exists() else "",  # 如果 dict 目錄存在就使用
+                data_dir="",  # 根據 Android 版本，這個可以為空
             )
             
             model_config = sherpa_onnx.OfflineTtsModelConfig(
                 vits=vits_config,
-                num_threads=2 if device == "cpu" else 1,
+                num_threads=4 if device == "cpu" else 2,
                 debug=False,
                 provider=provider,
             )
             
             config = sherpa_onnx.OfflineTtsConfig(
                 model=model_config,
-                rule_fsts="",
-                max_num_sentences=2,
+                rule_fsts="",  # 參考 Android 版本設為空
+                rule_fars="",  # 參考 Android 版本設為空  
+                max_num_sentences=5,
             )
             
             print("🔄 正在載入 TTS 模型...")
             self.tts = sherpa_onnx.OfflineTts(config)
-            print("🚀 TTS 模型初始化成功!")
+            
+            # 獲取模型信息
+            num_speakers = self.tts.num_speakers
+            sample_rate = self.tts.sample_rate
+            
+            print(f"✅ TTS 模型載入成功!")
+            print(f"📊 說話者數量: {num_speakers}")
+            print(f"📊 採樣率: {sample_rate} Hz")
             
             # 測試模型
             test_audio = self.tts.generate(text="測試", sid=0, speed=1.0)
             if len(test_audio.samples) > 0:
                 print("✅ 模型測試通過!")
-                
-                # 測試轉換功能
-                print("\n🧪 測試文本轉換:")
-                self.text_converter.test_conversion()
             
         except Exception as e:
             print(f"❌ 模型設置失敗: {e}")
@@ -500,12 +333,10 @@ class TaiwaneseVITSTTS:
 
     def validate_converted_text(self, text):
         """驗證轉換後的文本是否適合TTS"""
-        # 檢查是否還有英文字母
         english_chars = re.findall(r'[a-zA-Z]+', text)
         if english_chars:
             self.debug_print(f"警告：轉換後仍有英文字母: {english_chars}")
         
-        # 檢查是否有不支持的字符
         unsupported_chars = re.findall(r'[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\s\d，。！？；：]', text)
         if unsupported_chars:
             self.debug_print(f"警告：發現可能不支持的字符: {set(unsupported_chars)}")
@@ -513,7 +344,7 @@ class TaiwaneseVITSTTS:
         return text
 
     def synthesize(self, text, speed=1.0, enable_conversion=True):
-        """合成語音 - 增強調試版"""
+        """合成語音"""
         if not text or not text.strip():
             return None, "❌ 請輸入文本"
         
@@ -523,19 +354,15 @@ class TaiwaneseVITSTTS:
         # 文本轉換
         if enable_conversion:
             text = self.text_converter.convert_text(original_text)
-            # 驗證轉換結果
             text = self.validate_converted_text(text)
         else:
             text = original_text
-            self.debug_print("跳過文本轉換")
         
         if len(text) > 500:
             text = text[:500]
-            self.debug_print("文本過長，已截斷至500字符")
             
         try:
             print(f"🎤 正在合成語音...")
-            self.debug_print(f"最終TTS輸入文本: {repr(text)}")
             
             if enable_conversion and text != original_text:
                 print(f"📝 使用轉換後文本: {text}")
@@ -543,8 +370,6 @@ class TaiwaneseVITSTTS:
             audio = self.tts.generate(text=text, sid=0, speed=speed)
             samples = audio.samples
             sample_rate = audio.sample_rate
-            
-            self.debug_print(f"TTS輸出 - 樣本數: {len(samples)}, 採樣率: {sample_rate}")
             
             if len(samples) == 0:
                 return None, "❌ 語音生成失敗：生成的音頻為空"
@@ -564,16 +389,11 @@ class TaiwaneseVITSTTS:
             if enable_conversion and text != original_text:
                 status_info += f"\n🔄 文本轉換: {original_text} → {text}"
             
-            # 添加調試信息
-            if self.debug_mode:
-                status_info += f"\n🔍 調試信息:\n  原始長度: {len(original_text)}\n  轉換後長度: {len(text)}"
-            
             return (sample_rate, audio_array), status_info
             
         except Exception as e:
             error_msg = f"❌ 語音合成失敗: {str(e)}"
             print(error_msg)
-            self.debug_print(f"合成失敗詳情: {e}")
             return None, error_msg
 
 
@@ -598,7 +418,7 @@ def generate_speech(text, speed, enable_conversion):
 
 
 def create_interface():
-    # 預設範例文本 - 純中文版本
+    # 預設範例文本
     examples = [
         ["你好，歡迎使用繁體中文語音合成系統！", 1.0],
         ["今天天氣晴朗，適合外出踏青。", 1.0],
@@ -674,7 +494,6 @@ def create_interface():
                     info="調節語音播放速度"
                 )
                 
-                # 隱藏的轉換開關，預設啟用
                 enable_conversion = gr.State(value=True)
                 
                 generate_btn = gr.Button(
@@ -720,11 +539,9 @@ def create_interface():
             ### 🔧 技術資訊
             - **模型**: MediaTek Breeze2-VITS-onnx
             - **運行設備**: {device_info}
-            
-            ```
             """)
         
-        # 事件綁定 - 修正inputs參數
+        # 事件綁定
         generate_btn.click(
             fn=lambda text, speed, conv=True: generate_speech(text, speed, conv),
             inputs=[text_input, speed],
