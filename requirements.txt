@@ -1,7 +1,14 @@
-gradio
-numpy
-torch
-sherpa-onnx
-huggingface_hub
-pypinyin
-pathlib
+# Core TTS
+sherpa-onnx>=1.10.0
+numpy>=1.24.0
+
+# Text processing
+pypinyin>=0.50.0
+
+# Slide conversion
+PyMuPDF>=1.23.0
+comtypes>=1.4.0
+
+# UI
+customtkinter>=5.2.0
+Pillow>=10.0.0
