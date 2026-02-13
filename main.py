@@ -1,21 +1,35 @@
 """簡報自動旁白系統 -- 應用程式進入點"""
 import logging
 import sys
+import traceback
 
-from config import OUTPUT_DIR, TEMP_DIR
+from config import APP_DIR, OUTPUT_DIR, TEMP_DIR
 
 
 def setup_logging() -> None:
+    handlers = [logging.StreamHandler(sys.stdout)]
+
+    # 打包環境下同時寫入 log 檔案，方便除錯
+    if getattr(sys, 'frozen', False):
+        log_path = APP_DIR / "Breeze2VITS.log"
+        handlers.append(logging.FileHandler(str(log_path), encoding="utf-8"))
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
+        handlers=handlers,
     )
 
 
 def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
+
+    if getattr(sys, 'frozen', False):
+        logger.info("執行模式: PyInstaller 打包")
+        logger.info("APP_DIR: %s", APP_DIR)
+    else:
+        logger.info("執行模式: 開發環境")
 
     # 確保輸出目錄存在
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -28,6 +42,7 @@ def main() -> None:
         engine = TTSEngine()
     except Exception as e:
         logger.error("TTS 引擎初始化失敗: %s", e)
+        logger.error("詳細錯誤:\n%s", traceback.format_exc())
         engine = None
 
     # 啟動 UI

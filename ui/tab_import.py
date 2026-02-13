@@ -7,7 +7,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 from PIL import Image
 
-from config import DEFAULT_SLIDE_DPI, TEMP_DIR
+from config import DEFAULT_SLIDE_DPI, PROMPTS_DIR, TEMP_DIR
 from core.script_parser import (
     format_script_preview,
     parse_script,
@@ -18,8 +18,8 @@ from ui.widgets import ProgressSection
 
 logger = logging.getLogger(__name__)
 
-# AI 提示詞路徑
-_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "script_generator.md"
+# AI 提示詞路徑（使用 config 中的 PROMPTS_DIR，支援打包環境）
+_PROMPT_PATH = PROMPTS_DIR / "script_generator.md"
 
 
 class ImportTab:

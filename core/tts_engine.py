@@ -201,13 +201,60 @@ class TTSEngine:
             p = Path(path)
             if not p.exists() or p.stat().st_size == 0:
                 raise FileNotFoundError(f"模型檔案缺失: {label} ({path})")
+            logger.info("檔案驗證: %s = %s (%d bytes)", label, path, p.stat().st_size)
 
         dict_dir_str = self._dict_dir if Path(self._dict_dir).exists() else ""
 
+        # 驗證 ONNX 模型檔案可被 Python 正確讀取（排除路徑編碼問題）
+        model_path_to_use = self._model_path
+        try:
+            with open(self._model_path, "rb") as f:
+                header = f.read(4)
+            if len(header) < 4:
+                raise RuntimeError(f"模型檔案過小或為空: {self._model_path}")
+            logger.info("模型檔案 Python 讀取驗證通過 (header: %s)", header.hex())
+        except Exception as e:
+            logger.error("Python 無法讀取模型檔案: %s", e)
+            raise
+
+        # 若路徑含非 ASCII 字元，嘗試複製到暫存 ASCII 路徑
+        # （某些版本的 onnxruntime C++ 層無法處理 Unicode 路徑）
+        try:
+            self._model_path.encode("ascii")
+            self._lexicon_path.encode("ascii")
+            self._tokens_path.encode("ascii")
+        except UnicodeEncodeError:
+            logger.warning("偵測到非 ASCII 路徑，複製模型到暫存目錄...")
+            model_path_to_use = self._copy_to_ascii_temp()
+
+        self._tts = self._try_load_model(
+            model_path_to_use,
+            self._lexicon_path if model_path_to_use == self._model_path else None,
+            self._tokens_path if model_path_to_use == self._model_path else None,
+            dict_dir_str if model_path_to_use == self._model_path else "",
+        )
+
+        # 簡單測試
+        test = self._tts.generate(text="測試", sid=0, speed=1.0)
+        if len(test.samples) == 0:
+            raise RuntimeError("模型測試失敗：產生的音訊為空")
+        logger.info("模型測試通過")
+
+    def _try_load_model(
+        self,
+        model_path: str,
+        lexicon_path: Optional[str] = None,
+        tokens_path: Optional[str] = None,
+        dict_dir_str: str = "",
+    ) -> sherpa_onnx.OfflineTts:
+        """嘗試載入模型，失敗時自動嘗試短路徑備案"""
+        lexicon = lexicon_path or self._lexicon_path
+        tokens = tokens_path or self._tokens_path
+
         vits_config = sherpa_onnx.OfflineTtsVitsModelConfig(
-            model=self._model_path,
-            lexicon=self._lexicon_path,
-            tokens=self._tokens_path,
+            model=model_path,
+            lexicon=lexicon,
+            tokens=tokens,
             dict_dir=dict_dir_str,
             data_dir="",
         )
@@ -226,19 +273,56 @@ class TTSEngine:
             max_num_sentences=TTS_MAX_SENTENCES,
         )
 
-        logger.info("正在載入 TTS 模型...")
-        self._tts = sherpa_onnx.OfflineTts(config)
-        logger.info(
-            "TTS 模型載入成功 (說話者: %d, 取樣率: %d Hz)",
-            self._tts.num_speakers,
-            self._tts.sample_rate,
-        )
+        logger.info("正在載入 TTS 模型 (model=%s)...", model_path)
+        try:
+            tts = sherpa_onnx.OfflineTts(config)
+            logger.info(
+                "TTS 模型載入成功 (說話者: %d, 取樣率: %d Hz)",
+                tts.num_speakers,
+                tts.sample_rate,
+            )
+            return tts
+        except RuntimeError as e:
+            err_msg = str(e)
+            if "No graph was found" in err_msg and model_path == self._model_path:
+                # onnxruntime C++ 層可能因路徑問題無法讀取檔案
+                # 嘗試複製到暫存 ASCII 路徑
+                logger.warning(
+                    "模型載入失敗 (%s)，嘗試複製到暫存短路徑...", err_msg
+                )
+                alt_path = self._copy_to_ascii_temp()
+                return self._try_load_model(alt_path)
+            raise
 
-        # 簡單測試
-        test = self._tts.generate(text="測試", sid=0, speed=1.0)
-        if len(test.samples) == 0:
-            raise RuntimeError("模型測試失敗：產生的音訊為空")
-        logger.info("模型測試通過")
+    def _copy_to_ascii_temp(self) -> str:
+        """將模型檔案複製到純 ASCII 暫存路徑"""
+        import shutil
+        import tempfile
+
+        temp_base = Path(tempfile.gettempdir()) / "b2vits_models"
+        temp_base.mkdir(parents=True, exist_ok=True)
+
+        for src_attr in ("_model_path", "_lexicon_path", "_tokens_path"):
+            src = Path(getattr(self, src_attr))
+            dst = temp_base / src.name
+            if not dst.exists() or dst.stat().st_size != src.stat().st_size:
+                shutil.copy2(str(src), str(dst))
+                logger.info("已複製 %s -> %s", src.name, dst)
+
+        # dict 目錄
+        dict_src = Path(self._dict_dir)
+        if dict_src.exists():
+            dict_dst = temp_base / "dict"
+            if not dict_dst.exists():
+                shutil.copytree(str(dict_src), str(dict_dst))
+
+        self._lexicon_path = str(temp_base / Path(self._lexicon_path).name)
+        self._tokens_path = str(temp_base / Path(self._tokens_path).name)
+        new_dict = str(temp_base / "dict")
+        if Path(new_dict).exists():
+            self._dict_dir = new_dict
+
+        return str(temp_base / Path(self._model_path).name)
 
     def synthesize(
         self,

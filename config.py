@@ -10,17 +10,20 @@ else:
     BASE_DIR = Path(__file__).parent
     APP_DIR = BASE_DIR
 
-# 模型路徑
-MODEL_DIR = BASE_DIR / "models"
+# 模型路徑（使用 APP_DIR：exe 同層目錄，方便外部管理）
+MODEL_DIR = APP_DIR / "models"
 MODEL_PATH = MODEL_DIR / "breeze2-vits.onnx"
 LEXICON_PATH = MODEL_DIR / "lexicon.txt"
 TOKENS_PATH = MODEL_DIR / "tokens.txt"
-DICT_DIR = BASE_DIR / "dict"
-TEXT_MAPPING_PATH = BASE_DIR / "text_mapping.txt"
+DICT_DIR = APP_DIR / "dict"
+TEXT_MAPPING_PATH = APP_DIR / "text_mapping.txt"
 
-# ffmpeg
-FFMPEG_DIR = BASE_DIR / "ffmpeg"
+# ffmpeg（使用 APP_DIR：exe 同層目錄）
+FFMPEG_DIR = APP_DIR / "ffmpeg"
 FFMPEG_PATH = FFMPEG_DIR / "ffmpeg.exe"
+
+# 提示詞路徑
+PROMPTS_DIR = APP_DIR / "prompts"
 
 # TTS 設定
 TTS_NUM_THREADS = 4
