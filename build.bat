@@ -1,17 +1,17 @@
 @echo off
 REM ============================================================
-REM  Breeze2VITS Build Script
+REM  SlideNarrator Build Script
 REM  Builds the project into a standalone executable package
 REM ============================================================
 
 setlocal enabledelayedexpansion
 
 set "PROJECT_DIR=%~dp0"
-set "DIST_DIR=%PROJECT_DIR%dist\Breeze2VITS"
-set "SPEC_FILE=%PROJECT_DIR%Breeze2VITS.spec"
+set "DIST_DIR=%PROJECT_DIR%dist\SlideNarrator"
+set "SPEC_FILE=%PROJECT_DIR%SlideNarrator.spec"
 
 echo ============================================================
-echo  Breeze2VITS Build Script
+echo  SlideNarrator Build Script
 echo ============================================================
 echo.
 
@@ -57,8 +57,8 @@ echo.
 echo   Output directory: %DIST_DIR%
 echo.
 echo   Directory structure:
-echo     Breeze2VITS/
-echo       Breeze2VITS.exe      (main executable)
+echo     SlideNarrator/
+echo       SlideNarrator.exe      (main executable)
 echo       _internal/           (Python runtime)
 echo       models/              (TTS model files)
 echo       ffmpeg/              (ffmpeg.exe)
@@ -70,7 +70,7 @@ echo ============================================================
 echo  BUILD COMPLETE
 echo ============================================================
 echo.
-echo  You can copy the entire "dist\Breeze2VITS" folder
+echo  You can copy the entire "dist\SlideNarrator" folder
 echo  to another machine to run the application.
 echo.
 pause

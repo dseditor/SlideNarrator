@@ -11,7 +11,7 @@ def setup_logging() -> None:
 
     # 打包環境下同時寫入 log 檔案，方便除錯
     if getattr(sys, 'frozen', False):
-        log_path = APP_DIR / "Breeze2VITS.log"
+        log_path = APP_DIR / "SlideNarrator.log"
         handlers.append(logging.FileHandler(str(log_path), encoding="utf-8"))
 
     logging.basicConfig(

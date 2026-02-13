@@ -18,3 +18,10 @@ _temp_videos/
 # OS
 Thumbs.db
 .DS_Store
+
+# Build artifacts
+build/
+dist/
+*.spec
+Breeze2VITS.log
+SlideNarrator.log

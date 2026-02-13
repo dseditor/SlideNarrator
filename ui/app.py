@@ -33,7 +33,7 @@ class NarratorApp(ctk.CTk):
     def __init__(self, shared_state: SharedState):
         super().__init__()
 
-        self.title("簡報自動旁白系統 - Breeze2-VITS")
+        self.title("簡報自動旁白系統 - SlideNarrator")
         self.geometry("1000x720")
         self.minsize(800, 600)
 
