@@ -5,6 +5,7 @@ __pycache__/
 
 # 測試腳本
 test_*.py
+REQ.txt
 
 # 暫存檔案
 temp/
