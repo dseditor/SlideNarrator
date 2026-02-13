@@ -225,8 +225,7 @@ def generate_full_video(
             "-i", image_list,
             "-i", combined_audio,
             "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                   f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
-                   f"fps=25",
+                   f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black",
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", "23",
@@ -262,6 +261,9 @@ def generate_full_video(
         shutil.rmtree(str(temp_dir), ignore_errors=True)
     except Exception:
         pass
+
+    if progress_callback:
+        progress_callback(steps, steps, "影片生成完成")
 
     logger.info("影片生成完成: %s", output_path)
     return output_path
