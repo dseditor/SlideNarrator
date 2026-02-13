@@ -9,7 +9,9 @@
 支援硬體加速編碼器：NVENC (CUDA)、Intel QSV、AMD AMF。
 """
 import logging
+import os
 import subprocess
+import tempfile
 import wave as wave_module
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,21 +105,30 @@ def _run_ffmpeg(args: List[str], description: str = "") -> None:
 
 def _test_encoder(encoder: EncoderConfig) -> bool:
     """
-    實際嘗試用指定編碼器編碼一小段畫面，確認硬體是否真正可用。
+    實際嘗試用指定編碼器編碼一幀畫面到暫存檔，確認硬體是否真正可用。
 
-    比單純查 -encoders 列表更可靠：有些系統列出了編碼器但驅動不支援。
+    參考 HwCodecDetect 的偵測邏輯：
+    - 使用 426x240 (240p) 解析度，避免低於硬體最低限制
+      （NVENC 不支援 64x64 等極小解析度，會回傳 invalid param）
+    - 產生實際 mp4 檔而非 -f null，更可靠地驗證編碼器功能
+    - 偵測時不帶使用階段的額外參數，避免參數不相容導致誤判
     """
     ffmpeg = get_ffmpeg_path()
+    # 使用系統暫存目錄
+    tmp_dir = tempfile.gettempdir()
+    test_output = os.path.join(tmp_dir, f"_hwtest_{encoder.codec}.mp4")
+
     cmd = [
         ffmpeg,
-        "-f", "lavfi",
-        "-i", "color=black:s=64x64:d=0.1:r=25",
-        "-c:v", encoder.codec,
-        *encoder.extra_args,
-        "-frames:v", "3",
-        "-f", "null",
+        "-loglevel", "quiet",
+        "-hide_banner",
         "-y",
-        "NUL",  # Windows null device
+        "-f", "lavfi",
+        "-i", "color=white:s=426x240:d=1",
+        "-frames:v", "1",
+        "-c:v", encoder.codec,
+        "-pixel_format", "yuv420p",
+        test_output,
     ]
 
     try:
@@ -126,21 +137,34 @@ def _test_encoder(encoder: EncoderConfig) -> bool:
             capture_output=True,
             text=True,
             creationflags=_CREATE_NO_WINDOW,
-            timeout=10,
+            timeout=15,
         )
-        success = result.returncode == 0
+        # 確認 returncode 為 0 且輸出檔有實際內容
+        success = (
+            result.returncode == 0
+            and os.path.exists(test_output)
+            and os.path.getsize(test_output) > 0
+        )
         if success:
             logger.info("編碼器可用: %s (%s)", encoder.name, encoder.codec)
         else:
             logger.debug(
-                "編碼器不可用: %s -- %s",
+                "編碼器不可用: %s -- returncode=%d, stderr=%s",
                 encoder.codec,
+                result.returncode,
                 result.stderr[-200:] if result.stderr else "unknown error",
             )
         return success
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
         logger.debug("編碼器測試失敗: %s -- %s", encoder.codec, e)
         return False
+    finally:
+        # 清理暫存檔
+        try:
+            if os.path.exists(test_output):
+                os.remove(test_output)
+        except OSError:
+            pass
 
 
 def detect_available_encoders() -> List[EncoderConfig]:
