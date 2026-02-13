@@ -29,6 +29,7 @@ PROMPTS_DIR = APP_DIR / "prompts"
 TTS_NUM_THREADS = 4
 TTS_PROVIDER = "CPUExecutionProvider"
 TTS_MAX_SENTENCES = 5
+TTS_PARALLEL_WORKERS = 2  # 並行合成 worker 數量（1 = 單執行緒）
 DEFAULT_SPEED = 1.0
 DEFAULT_SID = 0
 

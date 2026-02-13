@@ -1,12 +1,16 @@
-"""音訊處理模組 -- 合併句子音訊、計算時長、匯出 WAV"""
+"""音訊處理模組 -- 合併句子音訊、計算時長、匯出 WAV
+
+支援並行 TTS 合成：先並行產生所有句子的音訊，再按順序計算時間軸。
+"""
 import logging
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from config import SENTENCE_PAUSE_SEC
+from config import SENTENCE_PAUSE_SEC, TTS_PARALLEL_WORKERS
 from core.script_parser import Script
 
 logger = logging.getLogger(__name__)
@@ -69,6 +73,27 @@ def concatenate_audio(
     return np.concatenate(parts)
 
 
+def _synthesize_one(
+    tts_engine,
+    text: str,
+    speed: float,
+    page_num: int,
+    sent_idx: int,
+) -> Tuple[Optional[np.ndarray], Optional[int], Optional[str]]:
+    """
+    合成單句音訊的 worker 函數（供 ThreadPoolExecutor 呼叫）。
+
+    回傳 (samples, sample_rate, error_msg)
+    成功時 error_msg 為 None；失敗時 samples 和 sr 為 None。
+    """
+    try:
+        samples, sr = tts_engine.synthesize(text, speed=speed)
+        return samples, sr, None
+    except Exception as e:
+        logger.error("合成失敗: P%d S%d: %s", page_num, sent_idx + 1, e)
+        return None, None, str(e)
+
+
 def process_all_pages(
     script: Script,
     tts_engine,
@@ -78,7 +103,7 @@ def process_all_pages(
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> List[Tuple[np.ndarray, float]]:
     """
-    處理所有頁面的 TTS 生成與音訊處理。
+    處理所有頁面的 TTS 生成與音訊處理（支援並行合成）。
 
     progress_callback(current, total, message):
         用於 UI 進度條更新。
@@ -87,42 +112,105 @@ def process_all_pages(
         [(page_audio, page_duration), ...] 每頁的合併音訊與總時長。
         同時更新 script 中每個 Sentence 的 duration_sec 和 start_sec。
 
-    時間軸策略（改進版）：
-        - 使用單一 global_cursor 追蹤全域時間，消除跨頁面算法累積偏移
-        - 所有時長直接基於 WAV 檔案的實際 frames / framerate，精確到 sample 級別
-        - 合成時統一使用第一次合成回傳的實際取樣率
+    並行策略：
+        1. 先用 ThreadPoolExecutor 並行合成所有句子的音訊
+        2. 所有合成完成後，按原始順序計算 global_cursor 時間軸
+        3. 字幕時間軸完全不受並行影響，保證與音訊同步
     """
     total_sentences = script.total_sentences
-    current_sentence = 0
     results: List[Tuple[np.ndarray, float]] = []
 
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    # 取得引擎宣告的取樣率（用於靜音生成和合併）
+    # 取得引擎宣告的取樣率
     engine_sr = tts_engine.sample_rate
-    # 實際合成取樣率在首次合成時確認
-    actual_sr: Optional[int] = None
 
-    # 全域時間游標：精確追蹤已產生音訊的總時長
+    # ── 階段 1：收集所有待合成句子 ──
+    all_sentences = []
+    for page in script.pages:
+        for sentence in page.sentences:
+            all_sentences.append((page.page_number, sentence))
+
+    if progress_callback:
+        progress_callback(0, total_sentences, "開始並行合成音訊...")
+
+    # ── 階段 2：並行合成所有句子 ──
+    # 結果按原始索引存放，確保順序性
+    synth_results: List[Tuple[Optional[np.ndarray], Optional[int], Optional[str]]] = [
+        (None, None, None)
+    ] * len(all_sentences)
+
+    workers = max(1, TTS_PARALLEL_WORKERS)
+    completed_count = 0
+
+    if workers <= 1:
+        # 單執行緒模式：直接循序合成（向後相容）
+        for idx, (page_num, sentence) in enumerate(all_sentences):
+            completed_count += 1
+            if progress_callback:
+                progress_callback(
+                    completed_count,
+                    total_sentences,
+                    f"合成中 P{page_num}: {sentence.text[:20]}...",
+                )
+            synth_results[idx] = _synthesize_one(
+                tts_engine, sentence.text, speed, page_num, sentence.sentence_index,
+            )
+    else:
+        # 多執行緒模式：並行合成
+        logger.info("啟用並行合成: %d 個 workers", workers)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_idx = {}
+            for idx, (page_num, sentence) in enumerate(all_sentences):
+                future = executor.submit(
+                    _synthesize_one,
+                    tts_engine,
+                    sentence.text,
+                    speed,
+                    page_num,
+                    sentence.sentence_index,
+                )
+                future_to_idx[future] = idx
+
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                synth_results[idx] = future.result()
+
+                completed_count += 1
+                page_num, sentence = all_sentences[idx]
+                if progress_callback:
+                    progress_callback(
+                        completed_count,
+                        total_sentences,
+                        f"已完成 {completed_count}/{total_sentences}: "
+                        f"P{page_num} {sentence.text[:15]}...",
+                    )
+
+    # ── 階段 3：按順序分配時間軸（字幕同步的關鍵） ──
+    # 先確認實際取樣率（使用第一個成功合成的結果）
+    actual_sr: Optional[int] = None
+    for samples, sr, err in synth_results:
+        if samples is not None and sr is not None:
+            actual_sr = sr
+            if sr != engine_sr:
+                logger.warning(
+                    "取樣率修正: engine 宣告=%d, 實際合成=%d，以實際值為準",
+                    engine_sr, sr,
+                )
+            break
+
     global_cursor = 0.0
+    sentence_idx = 0  # 全域句子計數器
 
     for page in script.pages:
         page_segments: List[np.ndarray] = []
 
         for i, sentence in enumerate(page.sentences):
-            current_sentence += 1
-            if progress_callback:
-                progress_callback(
-                    current_sentence,
-                    total_sentences,
-                    f"第 {page.page_number} 頁: {sentence.text[:20]}...",
-                )
+            samples, sr, err = synth_results[sentence_idx]
 
-            # 記錄此句在全域時間軸的起始時間（在加入靜音間隔之後）
+            # 記錄此句在全域時間軸的起始時間
             if i > 0:
-                # 在句子之間插入靜音間隔
-                # 使用已確認的取樣率計算靜音長度，確保 sample 精確
                 sr_for_silence = actual_sr if actual_sr else engine_sr
                 silence_samples = int(pause_sec * sr_for_silence)
                 silence_sec = silence_samples / sr_for_silence
@@ -130,30 +218,17 @@ def process_all_pages(
 
             sentence.start_sec = global_cursor
 
-            try:
-                samples, sr = tts_engine.synthesize(sentence.text, speed=speed)
-
-                # 首次合成時確認實際取樣率
-                if actual_sr is None:
-                    actual_sr = sr
-                    if sr != engine_sr:
-                        logger.warning(
-                            "取樣率修正: engine 宣告=%d, 實際合成=%d，以實際值為準",
-                            engine_sr, sr,
-                        )
-
+            if samples is not None and sr is not None:
+                # 合成成功
                 if sr != actual_sr:
                     logger.warning(
-                        "取樣率不一致: 本次合成=%d, 先前=%d",
-                        sr, actual_sr,
+                        "取樣率不一致: 本次合成=%d, 先前=%d", sr, actual_sr,
                     )
 
                 page_segments.append(samples)
-
-                # 直接從 samples 長度算出精確時長（sample 級精度）
                 sentence.duration_sec = len(samples) / sr
 
-                # 儲存單句音訊供預覽播放使用
+                # 儲存單句音訊
                 if output_dir:
                     wav_path = (
                         Path(output_dir)
@@ -163,28 +238,22 @@ def process_all_pages(
                     sentence.audio_path = str(wav_path)
 
                 logger.info(
-                    "合成完成: P%d S%d (%.4f秒, 起始%.4f秒) %s",
+                    "時間軸分配: P%d S%d (%.4f秒, 起始%.4f秒) %s",
                     page.page_number,
                     sentence.sentence_index + 1,
                     sentence.duration_sec,
                     sentence.start_sec,
                     sentence.text[:30],
                 )
-            except Exception as e:
-                logger.error(
-                    "合成失敗: P%d S%d: %s",
-                    page.page_number,
-                    sentence.sentence_index + 1,
-                    e,
-                )
-                # 使用 1 秒靜音替代
+            else:
+                # 合成失敗，使用 1 秒靜音替代
                 sr_for_fallback = actual_sr if actual_sr else engine_sr
                 silence = generate_silence(1.0, sr_for_fallback)
                 sentence.duration_sec = 1.0
                 page_segments.append(silence)
 
-            # 累計全域時間游標
             global_cursor += sentence.duration_sec
+            sentence_idx += 1
 
         # 使用實際取樣率合併該頁所有句子
         merge_sr = actual_sr if actual_sr else engine_sr
@@ -195,7 +264,6 @@ def process_all_pages(
             if output_dir:
                 page_wav = Path(output_dir) / f"page{page.page_number:03d}_full.wav"
                 save_wav(str(page_wav), combined, merge_sr)
-                # 從實際檔案讀取精確的頁面時長（用於影片合成）
                 page_duration = get_wav_duration(str(page_wav))
             else:
                 page_duration = calculate_duration(combined, merge_sr)
@@ -204,7 +272,7 @@ def process_all_pages(
         else:
             results.append((np.array([], dtype=np.float32), 0.0))
 
-    # 最終驗證：列出所有句子的時間戳
+    # 最終驗證
     logger.info("=== 字幕時間軸摘要 ===")
     for page in script.pages:
         for s in page.sentences:
@@ -218,7 +286,6 @@ def process_all_pages(
             )
     logger.info("字幕總時長: %.4f 秒", global_cursor)
 
-    # 同時記錄合併音訊的實際總時長供比對
     actual_total = sum(dur for _, dur in results)
     logger.info("音訊實際總時長: %.4f 秒", actual_total)
     if abs(global_cursor - actual_total) > 0.1:
