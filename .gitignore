@@ -10,6 +10,9 @@ test_*.py
 temp/
 output/
 _temp_videos/
+models/
+ffmpeg/
+dict/
 
 # IDE
 .vscode/
