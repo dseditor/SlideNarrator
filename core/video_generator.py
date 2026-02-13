@@ -5,12 +5,15 @@
   2. 用 concat demuxer 指定每張投影片的顯示時長
   3. 一次 ffmpeg 指令產生最終影片
   避免了逐頁 AAC 編碼再拼接導致的時間軸累積偏移。
+
+支援硬體加速編碼器：NVENC (CUDA)、Intel QSV、AMD AMF。
 """
 import logging
 import subprocess
 import wave as wave_module
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -20,6 +23,48 @@ logger = logging.getLogger(__name__)
 
 # Windows: 隱藏 console 視窗
 _CREATE_NO_WINDOW = 0x08000000
+
+
+# ── 編碼器設定 ──
+
+@dataclass
+class EncoderConfig:
+    """影片編碼器設定"""
+    name: str               # 顯示名稱，例如 "NVIDIA NVENC (H.264)"
+    codec: str              # ffmpeg codec 名稱，例如 "h264_nvenc"
+    extra_args: List[str] = field(default_factory=list)  # 額外編碼參數
+    hw_type: str = "sw"     # "sw" / "nvidia" / "intel" / "amd"
+
+
+# 軟體編碼器（永遠可用的備援）
+SW_ENCODER = EncoderConfig(
+    name="軟體編碼 (libx264)",
+    codec="libx264",
+    extra_args=["-preset", "medium", "-crf", "23", "-tune", "stillimage"],
+    hw_type="sw",
+)
+
+# 候選硬體編碼器列表（按優先順序嘗試）
+_HW_ENCODER_CANDIDATES: List[EncoderConfig] = [
+    EncoderConfig(
+        name="NVIDIA NVENC (H.264)",
+        codec="h264_nvenc",
+        extra_args=["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
+        hw_type="nvidia",
+    ),
+    EncoderConfig(
+        name="Intel QSV (H.264)",
+        codec="h264_qsv",
+        extra_args=["-preset", "medium", "-global_quality", "23"],
+        hw_type="intel",
+    ),
+    EncoderConfig(
+        name="AMD AMF (H.264)",
+        codec="h264_amf",
+        extra_args=["-quality", "balanced", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23"],
+        hw_type="amd",
+    ),
+]
 
 
 def get_ffmpeg_path() -> str:
@@ -52,6 +97,86 @@ def _run_ffmpeg(args: List[str], description: str = "") -> None:
             "找不到 ffmpeg。請將 ffmpeg.exe 放入 ffmpeg/ 資料夾，"
             "或確認 ffmpeg 已加入系統 PATH。"
         )
+
+
+# ── 硬體編碼器偵測 ──
+
+def _test_encoder(encoder: EncoderConfig) -> bool:
+    """
+    實際嘗試用指定編碼器編碼一小段畫面，確認硬體是否真正可用。
+
+    比單純查 -encoders 列表更可靠：有些系統列出了編碼器但驅動不支援。
+    """
+    ffmpeg = get_ffmpeg_path()
+    cmd = [
+        ffmpeg,
+        "-f", "lavfi",
+        "-i", "color=black:s=64x64:d=0.1:r=25",
+        "-c:v", encoder.codec,
+        *encoder.extra_args,
+        "-frames:v", "3",
+        "-f", "null",
+        "-y",
+        "NUL",  # Windows null device
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            creationflags=_CREATE_NO_WINDOW,
+            timeout=10,
+        )
+        success = result.returncode == 0
+        if success:
+            logger.info("編碼器可用: %s (%s)", encoder.name, encoder.codec)
+        else:
+            logger.debug(
+                "編碼器不可用: %s -- %s",
+                encoder.codec,
+                result.stderr[-200:] if result.stderr else "unknown error",
+            )
+        return success
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        logger.debug("編碼器測試失敗: %s -- %s", encoder.codec, e)
+        return False
+
+
+def detect_available_encoders() -> List[EncoderConfig]:
+    """
+    偵測所有可用的硬體編碼器，回傳可用編碼器列表。
+
+    永遠包含軟體編碼器作為最後的備援選項。
+    可用於 UI 啟動時背景偵測，結果可快取。
+    """
+    available: List[EncoderConfig] = []
+
+    for candidate in _HW_ENCODER_CANDIDATES:
+        if _test_encoder(candidate):
+            available.append(candidate)
+
+    # 軟體編碼器永遠可用
+    available.append(SW_ENCODER)
+
+    logger.info(
+        "編碼器偵測完成: %d 個可用 (%s)",
+        len(available),
+        ", ".join(e.name for e in available),
+    )
+    return available
+
+
+def get_encoder_by_name(
+    name: str,
+    available: Optional[List[EncoderConfig]] = None,
+) -> EncoderConfig:
+    """根據名稱取得編碼器設定，找不到時回傳軟體編碼器"""
+    encoders = available or detect_available_encoders()
+    for enc in encoders:
+        if enc.name == name:
+            return enc
+    return SW_ENCODER
 
 
 # ── 音訊工具 ──
@@ -96,6 +221,15 @@ def _generate_silent_wav(
         wf.writeframes(silence.tobytes())
 
 
+def _build_video_encode_args(encoder: EncoderConfig) -> List[str]:
+    """根據編碼器設定，產生 ffmpeg 影片編碼參數"""
+    args = ["-c:v", encoder.codec]
+    args.extend(encoder.extra_args)
+
+    # 硬體編碼器不支援 -tune stillimage，但軟體編碼器的 extra_args 已包含
+    return args
+
+
 # ── 字幕 ──
 
 def burn_subtitles(
@@ -104,9 +238,12 @@ def burn_subtitles(
     output_path: str,
     font_name: str = "Microsoft JhengHei",
     font_size: int = 24,
+    encoder: Optional[EncoderConfig] = None,
 ) -> str:
     """將 SRT 字幕燒錄進影片"""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    enc = encoder or SW_ENCODER
 
     srt_escaped = str(Path(srt_path).resolve()).replace("\\", "/")
     srt_escaped = srt_escaped.replace(":", "\\:")
@@ -117,15 +254,18 @@ def burn_subtitles(
         f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2'"
     )
 
+    encode_args = _build_video_encode_args(enc)
+
     _run_ffmpeg(
         [
             "-i", str(video_path),
             "-vf", vf,
+            *encode_args,
             "-c:a", "copy",
             "-y",
             str(output_path),
         ],
-        description="燒錄字幕",
+        description=f"燒錄字幕 (編碼器: {enc.name})",
     )
     return output_path
 
@@ -142,6 +282,7 @@ def generate_full_video(
     resolution: Tuple[int, int] = DEFAULT_VIDEO_RESOLUTION,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     sample_rate: int = 48000,
+    encoder: Optional[EncoderConfig] = None,
 ) -> str:
     """
     單次合成完整影片。
@@ -158,7 +299,11 @@ def generate_full_video(
     output_path: 最終影片輸出路徑
     burn_srt: 是否燒錄字幕
     sample_rate: 音訊取樣率（用於產生靜音頁面）
+    encoder: 編碼器設定（None 時使用軟體編碼器）
     """
+    enc = encoder or SW_ENCODER
+    logger.info("使用編碼器: %s", enc.name)
+
     temp_dir = Path(output_path).parent / "_temp_videos"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -213,10 +358,11 @@ def generate_full_video(
 
     # ── 步驟 4: 單次合成影片 ──
     if progress_callback:
-        progress_callback(3, steps, "正在合成影片（單次合成）...")
+        progress_callback(3, steps, f"正在合成影片（{enc.name}）...")
 
     w, h = resolution
     combined_video = str(temp_dir / "_combined.mp4")
+    encode_args = _build_video_encode_args(enc)
 
     _run_ffmpeg(
         [
@@ -226,10 +372,7 @@ def generate_full_video(
             "-i", combined_audio,
             "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
-            "-tune", "stillimage",
+            *encode_args,
             "-r", "25",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
@@ -239,14 +382,14 @@ def generate_full_video(
             "-y",
             str(combined_video),
         ],
-        description="單次合成完整影片",
+        description=f"單次合成完整影片 ({enc.name})",
     )
 
     # ── 步驟 5: 燒錄字幕或輸出 ──
     if burn_srt and srt_path and Path(srt_path).exists():
         if progress_callback:
             progress_callback(steps - 1, steps, "正在燒錄字幕...")
-        burn_subtitles(combined_video, srt_path, output_path)
+        burn_subtitles(combined_video, srt_path, output_path, encoder=enc)
         try:
             Path(combined_video).unlink()
         except Exception:

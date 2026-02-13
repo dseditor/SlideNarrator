@@ -9,7 +9,13 @@ import customtkinter as ctk
 
 from config import DEFAULT_VIDEO_RESOLUTION, OUTPUT_DIR
 from core.subtitle_generator import generate_srt, save_srt
-from core.video_generator import generate_full_video
+from core.video_generator import (
+    EncoderConfig,
+    SW_ENCODER,
+    detect_available_encoders,
+    generate_full_video,
+    get_encoder_by_name,
+)
 from ui.widgets import ProgressSection
 
 logger = logging.getLogger(__name__)
@@ -18,6 +24,14 @@ _RESOLUTIONS = {
     "1920x1080 (1080p)": (1920, 1080),
     "1280x720 (720p)": (1280, 720),
     "2560x1440 (1440p)": (2560, 1440),
+}
+
+# 硬體類型對應的狀態圖標
+_HW_ICONS = {
+    "nvidia": "🟢 NVIDIA",
+    "intel": "🟢 Intel",
+    "amd": "🟢 AMD",
+    "sw": "⚪ CPU",
 }
 
 
@@ -30,12 +44,61 @@ class ExportTab:
         self.app = app
         self._is_exporting = False
 
+        # 編碼器偵測結果
+        self._available_encoders: list[EncoderConfig] = [SW_ENCODER]
+        self._encoder_detected = False
+
         self._build_ui()
+        self._start_encoder_detection()
 
     def _build_ui(self) -> None:
+        # ===== 編碼器狀態 =====
+        encoder_section = ctk.CTkFrame(self.parent)
+        encoder_section.pack(fill="x", padx=10, pady=(10, 5))
+
+        header_row = ctk.CTkFrame(encoder_section, fg_color="transparent")
+        header_row.pack(fill="x", padx=10, pady=(8, 4))
+
+        ctk.CTkLabel(
+            header_row, text="影片編碼器",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(side="left")
+
+        self._detect_status_label = ctk.CTkLabel(
+            header_row, text="  ⏳ 偵測中...",
+            font=ctk.CTkFont(size=12),
+            text_color="gray",
+        )
+        self._detect_status_label.pack(side="left", padx=(8, 0))
+
+        # 編碼器選擇
+        enc_row = ctk.CTkFrame(encoder_section, fg_color="transparent")
+        enc_row.pack(fill="x", padx=10, pady=(0, 4))
+
+        ctk.CTkLabel(enc_row, text="編碼器:").pack(side="left", padx=(0, 5))
+        self._encoder_var = ctk.StringVar(value=SW_ENCODER.name)
+        self._encoder_menu = ctk.CTkOptionMenu(
+            enc_row, variable=self._encoder_var,
+            values=[SW_ENCODER.name],
+            width=280,
+        )
+        self._encoder_menu.pack(side="left")
+
+        # 硬體加速狀態標籤
+        self._hw_status_frame = ctk.CTkFrame(encoder_section, fg_color="transparent")
+        self._hw_status_frame.pack(fill="x", padx=10, pady=(0, 8))
+
+        self._hw_status_label = ctk.CTkLabel(
+            self._hw_status_frame,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        )
+        self._hw_status_label.pack(anchor="w")
+
         # ===== 影片設定 =====
         settings = ctk.CTkFrame(self.parent)
-        settings.pack(fill="x", padx=10, pady=(10, 5))
+        settings.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
             settings, text="影片設定",
@@ -157,6 +220,61 @@ class ExportTab:
 
         self._output_video_path = ""
 
+    # ----- 編碼器偵測 -----
+
+    def _start_encoder_detection(self) -> None:
+        """背景執行硬體編碼器偵測（不阻塞 UI）"""
+        thread = threading.Thread(
+            target=self._detect_encoders_worker,
+            daemon=True,
+        )
+        thread.start()
+
+    def _detect_encoders_worker(self) -> None:
+        """背景 worker：偵測可用編碼器"""
+        try:
+            encoders = detect_available_encoders()
+            self.parent.after(0, self._on_detection_complete, encoders)
+        except Exception as e:
+            logger.error("編碼器偵測失敗: %s", e)
+            self.parent.after(0, self._on_detection_complete, [SW_ENCODER])
+
+    def _on_detection_complete(self, encoders: list) -> None:
+        """偵測完成後更新 UI（在主執行緒）"""
+        self._available_encoders = encoders
+        self._encoder_detected = True
+
+        encoder_names = [e.name for e in encoders]
+        self._encoder_menu.configure(values=encoder_names)
+
+        # 自動選擇最佳的編碼器（列表第一個，即優先硬體）
+        best = encoders[0]
+        self._encoder_var.set(best.name)
+
+        # 更新狀態標籤
+        hw_encoders = [e for e in encoders if e.hw_type != "sw"]
+        if hw_encoders:
+            hw_names = ", ".join(_HW_ICONS.get(e.hw_type, e.name) for e in hw_encoders)
+            self._detect_status_label.configure(
+                text=f"  ✅ 已偵測到硬體加速",
+                text_color="#2ecc71",
+            )
+            self._hw_status_label.configure(
+                text=f"可用: {hw_names}  |  {_HW_ICONS['sw']} 軟體備援",
+                text_color=None,
+            )
+        else:
+            self._detect_status_label.configure(
+                text="  ℹ️ 僅軟體編碼",
+                text_color="orange",
+            )
+            self._hw_status_label.configure(
+                text="未偵測到硬體加速（NVIDIA/Intel/AMD），使用 CPU 軟體編碼",
+                text_color="gray",
+            )
+
+        logger.info("UI 編碼器更新: 選擇 %s", best.name)
+
     # ----- 操作 -----
 
     def _browse_output(self) -> None:
@@ -199,6 +317,13 @@ class ExportTab:
             filename = self._filename_entry.get() or "presentation_narrated"
             resolution = _RESOLUTIONS.get(self._res_var.get(), DEFAULT_VIDEO_RESOLUTION)
 
+            # 取得使用者選擇的編碼器
+            selected_encoder = get_encoder_by_name(
+                self._encoder_var.get(),
+                self._available_encoders,
+            )
+            logger.info("匯出使用編碼器: %s", selected_encoder.name)
+
             # 產生 SRT
             srt_path = None
             if self._gen_srt_var.get():
@@ -223,6 +348,7 @@ class ExportTab:
                 resolution=resolution,
                 progress_callback=self._thread_safe_progress,
                 sample_rate=self.state.sample_rate,
+                encoder=selected_encoder,
             )
 
             self._output_video_path = video_path
@@ -238,9 +364,11 @@ class ExportTab:
     def _on_export_complete(self, video_path: str, srt_path) -> None:
         self._is_exporting = False
         self._export_btn.configure(state="normal", text="開始匯出影片")
+        self._progress.update_progress(1, 1, "匯出完成")
         self._progress.set_status("匯出完成")
 
-        msg = f"影片: {video_path}"
+        enc_name = self._encoder_var.get()
+        msg = f"影片: {video_path}\n編碼器: {enc_name}"
         if srt_path:
             msg += f"\n字幕: {srt_path}"
         self._done_label.configure(text=msg, text_color="green")
