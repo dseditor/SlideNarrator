@@ -31,9 +31,11 @@ pip install -r requirements.txt
 請確保您的系統已安裝 `ffmpeg`，並將其路徑加入環境變數中，或放置於專案根目錄的 `ffmpeg` 資料夾。
 
 ### 3. 模型放置
-請將 TTS 模型檔案放置於 `models/` 目錄下：
-- `*.onnx` (模型檔)
+請將 TTS 模型檔案放置於 `models/` 目錄下。
+本專案建議使用由 **MediaTek Research** 提供之 [Breeze2-VITS-onnx](https://huggingface.co/MediaTek-Research/Breeze2-VITS-onnx/tree/main) 模型：
+- `*.onnx` (模型檔，例如：`breeze2-vits.onnx`)
 - `tokens.txt`
+- `lexicon.txt`
 - `*.json` (配置檔)
 
 ## 📖 使用指南
