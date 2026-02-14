@@ -19,7 +19,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from config import DEFAULT_VIDEO_RESOLUTION, FFMPEG_PATH
+from config import DEFAULT_VIDEO_RESOLUTION, FFMPEG_PATH, SUBTITLE_SPACE_MULTIPLIER
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +263,8 @@ def burn_subtitles(
     font_name: str = "Microsoft JhengHei",
     font_size: int = 24,
     encoder: Optional[EncoderConfig] = None,
+    subtitle_space: bool = False,
+    subtitle_area_height: int = 0,
 ) -> str:
     """將 SRT 字幕燒錄進影片"""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -272,10 +274,16 @@ def burn_subtitles(
     srt_escaped = str(Path(srt_path).resolve()).replace("\\", "/")
     srt_escaped = srt_escaped.replace(":", "\\:")
 
+    # 啟用字幕空間時，將字幕定位到底部區域內
+    alignment = ""
+    if subtitle_space and subtitle_area_height > 0:
+        alignment = ",Alignment=2,MarginV=10"
+
     vf = (
         f"subtitles='{srt_escaped}'"
         f":force_style='FontName={font_name},FontSize={font_size},"
-        f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2'"
+        f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2"
+        f"{alignment}'"
     )
 
     encode_args = _build_video_encode_args(enc)
@@ -307,6 +315,8 @@ def generate_full_video(
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     sample_rate: int = 48000,
     encoder: Optional[EncoderConfig] = None,
+    subtitle_space: bool = False,
+    font_size: int = 24,
 ) -> str:
     """
     單次合成完整影片。
@@ -333,6 +343,23 @@ def generate_full_video(
 
     total = len(slide_images)
     steps = total + 3  # 準備 + 合成 + 字幕
+
+    # ── 字幕空間預處理 ──
+    subtitle_area_height = 0
+    actual_images = slide_images
+    if subtitle_space:
+        from core.slide_processor import prepare_slides_with_subtitle_space
+
+        subtitle_area_height = font_size * SUBTITLE_SPACE_MULTIPLIER
+        if progress_callback:
+            progress_callback(0, steps, "正在處理字幕空間...")
+        actual_images = prepare_slides_with_subtitle_space(
+            slide_images=slide_images,
+            target_resolution=resolution,
+            font_size=font_size,
+            output_dir=str(temp_dir / "_subtitle_space"),
+        )
+        logger.info("字幕空間處理完成，字幕區高度: %dpx", subtitle_area_height)
 
     # ── 步驟 1: 準備每頁音訊 ──
     if progress_callback:
@@ -372,12 +399,12 @@ def generate_full_video(
     image_list = str(temp_dir / "_image_list.txt")
     with open(image_list, "w", encoding="utf-8") as f:
         for i in range(total):
-            safe_path = str(Path(slide_images[i]).resolve()).replace("\\", "/")
+            safe_path = str(Path(actual_images[i]).resolve()).replace("\\", "/")
             f.write(f"file '{safe_path}'\n")
             f.write(f"duration {all_durations[i]:.6f}\n")
         # concat demuxer 要求：重複最後一張圖（否則最後一頁時長不正確）
-        if slide_images:
-            safe_path = str(Path(slide_images[-1]).resolve()).replace("\\", "/")
+        if actual_images:
+            safe_path = str(Path(actual_images[-1]).resolve()).replace("\\", "/")
             f.write(f"file '{safe_path}'\n")
 
     # ── 步驟 4: 單次合成影片 ──
@@ -388,14 +415,20 @@ def generate_full_video(
     combined_video = str(temp_dir / "_combined.mp4")
     encode_args = _build_video_encode_args(enc)
 
+    # 字幕空間模式：圖片已是目標解析度，不需要 scale+pad
+    if subtitle_space:
+        vf_args = ["-vf", f"scale={w}:{h}"]
+    else:
+        vf_args = ["-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"]
+
     _run_ffmpeg(
         [
             "-f", "concat",
             "-safe", "0",
             "-i", image_list,
             "-i", combined_audio,
-            "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                   f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black",
+            *vf_args,
             *encode_args,
             "-r", "25",
             "-pix_fmt", "yuv420p",
@@ -413,7 +446,13 @@ def generate_full_video(
     if burn_srt and srt_path and Path(srt_path).exists():
         if progress_callback:
             progress_callback(steps - 1, steps, "正在燒錄字幕...")
-        burn_subtitles(combined_video, srt_path, output_path, encoder=enc)
+        burn_subtitles(
+            combined_video, srt_path, output_path,
+            font_size=font_size,
+            encoder=enc,
+            subtitle_space=subtitle_space,
+            subtitle_area_height=subtitle_area_height,
+        )
         try:
             Path(combined_video).unlink()
         except Exception:

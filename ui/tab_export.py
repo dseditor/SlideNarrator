@@ -138,6 +138,12 @@ class ExportTab:
             variable=self._burn_srt_var,
         ).pack(anchor="w", padx=15, pady=2)
 
+        self._subtitle_space_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            sub_section, text="簡報字幕空間（在投影片底部延伸字幕區域）",
+            variable=self._subtitle_space_var,
+        ).pack(anchor="w", padx=15, pady=2)
+
         # 字型設定
         font_row = ctk.CTkFrame(sub_section, fg_color="transparent")
         font_row.pack(fill="x", padx=15, pady=(2, 8))
@@ -337,6 +343,8 @@ class ExportTab:
             page_durations = [dur for _, dur in self.state.page_audios]
 
             # 產生影片
+            subtitle_space = self._subtitle_space_var.get()
+            font_size = self._fontsize_var.get()
             video_path = str(Path(output_dir) / f"{filename}.mp4")
             generate_full_video(
                 slide_images=self.state.slide_images,
@@ -349,6 +357,8 @@ class ExportTab:
                 progress_callback=self._thread_safe_progress,
                 sample_rate=self.state.sample_rate,
                 encoder=selected_encoder,
+                subtitle_space=subtitle_space,
+                font_size=font_size,
             )
 
             self._output_video_path = video_path
