@@ -23,6 +23,7 @@ PPT/
 # OS
 Thumbs.db
 .DS_Store
+nul
 
 # Build artifacts
 build/
